@@ -1,6 +1,6 @@
 import { expect, test, describe, afterAll } from "bun:test";
-import * as net from "net";
 import { Listener } from "../src/listener";
+import { connect } from "net";
 
 describe("Listener", () => {
   const HOST = "127.0.0.1";
@@ -9,7 +9,7 @@ describe("Listener", () => {
   test("should accept an incoming connection", async () => {
     const listener = new Listener(HOST, PORT);
 
-    const client = net.connect(PORT, HOST);
+    const client = connect(PORT, HOST);
 
     const socket = await listener.accept();
     expect(socket).toBeDefined();

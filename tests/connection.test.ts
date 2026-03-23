@@ -1,19 +1,17 @@
 import { expect, test, describe } from "bun:test";
-import * as net from "net";
 import { Connection } from "../src/connection";
+import { connect, createServer } from "net";
 
 describe("Connection Class", () => {
   test("should echo data back", async () => {
-    const server = net
-      .createServer((socket) => {
-        const conn = new Connection(socket);
-        socket.on("data", async (data) => {
-          await conn.write(data);
-        });
-      })
-      .listen(9000);
+    const server = createServer((socket) => {
+      const conn = new Connection(socket);
+      socket.on("data", async (data) => {
+        await conn.write(data);
+      });
+    }).listen(9000);
 
-    const clientSocket = net.connect(9000, "127.0.0.1");
+    const clientSocket = connect(9000, "127.0.0.1");
     const clientConn = new Connection(clientSocket);
 
     const message = Buffer.from("hello");
