@@ -47,12 +47,12 @@ export class Listener {
   close(): Promise<void> {
     while (this.pendingAccepts.length > 0) {
       const { reject } = this.pendingAccepts.shift()!;
-      reject(err);
+      reject();
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((res, rej) => {
       this.server.close((err) => {
-        if (err) reject(err);
-        else resolve();
+        if (err) rej(err);
+        else res();
       });
     });
   }
