@@ -1,31 +1,60 @@
 export class ByteArray {
-  data: Buffer;
-  len: number;
+  private buffer: Buffer;
+  private head = 0;
+  private tail = 0;
 
-  constructor(len: number, cap: number) {
-    console.assert(len <= cap);
-    this.data = Buffer.alloc(cap);
-    this.len = len;
+  constructor(initialCapacity = 1024) {
+    this.buffer = Buffer.allocUnsafe(initialCapacity);
   }
 
-  push(buf: Buffer): void {
-    let newLen = buf.length + this.len;
-    let currentCap = Math.max(1, this.data.length);
+  get length(): number {
+    return this.tail - this.head;
+  }
 
-    if (newLen > currentCap) {
-      while (newLen > currentCap) {
-        currentCap *= 2;
-      }
-      let newBuf = Buffer.alloc(currentCap);
-      this.data.copy(newBuf);
-      this.data = newBuf;
+  get view(): Buffer {
+    return this.buffer.subarray(this.head, this.tail);
+  }
+
+  push(src: Buffer): void {
+    const required = this.tail + src.length;
+
+    if (required > this.buffer.length) {
+      this.ensureCapacity(src.length);
     }
-    buf.copy(this.data, this.len);
-    this.len = newLen;
+
+    src.copy(this.buffer, this.tail);
+    this.tail += src.length;
   }
 
-  pop(len: number): void {
-    this.data.copyWithin(0, len, this.data.length);
-    this.len -= len;
+  pop(n: number): Buffer {
+    const amount = Math.min(n, this.length);
+    const result = this.buffer.subarray(this.head, this.head + amount);
+    this.head += amount;
+
+    if (this.head === this.tail) {
+      this.head = 0;
+      this.tail = 0;
+    }
+    return result;
+  }
+
+  private ensureCapacity(addedLen: number): void {
+    const currentLen = this.length;
+
+    if (this.buffer.length >= currentLen + addedLen) {
+      this.buffer.copyWithin(0, this.head, this.tail);
+    } else {
+      const newCap = Math.max(this.buffer.length * 2, currentLen + addedLen);
+      const newBuf = Buffer.allocUnsafe(newCap);
+      this.buffer.copy(newBuf, 0, this.head, this.tail);
+      this.buffer = newBuf;
+    }
+
+    this.tail = currentLen;
+    this.head = 0;
+  }
+
+  toString(): string {
+    return this.buffer.toString("utf8", this.head, this.tail);
   }
 }

@@ -3,37 +3,32 @@ import { Connection } from "./connection";
 import { ByteArray } from "./bytearray";
 
 function getFullMessage(buf: ByteArray): null | Buffer {
-  const idx = buf.data.subarray(0, buf.len).indexOf("\n");
-  if (idx < 0) {
-    return null;
-  }
-  const msg = Buffer.from(buf.data.subarray(0, idx + 1));
+  const currentView = buf.view;
+  const idx = currentView.indexOf("\n");
+
+  if (idx < 0) return null;
+
+  const msg = Buffer.from(currentView.subarray(0, idx + 1));
   buf.pop(idx + 1);
   return msg;
 }
 
 async function serveClient(conn: Connection): Promise<void> {
-  const buf: ByteArray = new ByteArray(0, 256);
-  for (;;) {
-    const msg: null | Buffer = getFullMessage(buf);
+  const buf = new ByteArray(1024);
 
-    if (!msg) {
-      const data = await conn.read();
+  while (true) {
+    const data = await conn.read();
+    if (data.length === 0) return;
 
-      if (data.length === 0) {
-        console.log("[INFO] Connection closed by client");
+    buf.push(data);
+
+    let msg: Buffer | null;
+    while ((msg = getFullMessage(buf)) !== null) {
+      if (msg.equals(Buffer.from("quit\n"))) {
+        await conn.write(Buffer.from("bye\n"));
         return;
       }
-
-      console.log("[INFO] got:", data);
-      buf.push(data);
-    } else {
-      if (!msg.equals(Buffer.from("quit\n"))) {
-        await conn.write(Buffer.concat([Buffer.from("Echo: "), msg]));
-        continue;
-      }
-      await conn.write(Buffer.from("bye\n"));
-      return;
+      await conn.write(Buffer.concat([Buffer.from("Echo: "), msg]));
     }
   }
 }

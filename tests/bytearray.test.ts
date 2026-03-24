@@ -2,37 +2,49 @@ import { expect, test, describe } from "bun:test";
 import { ByteArray } from "../src/bytearray";
 
 describe("ByteArray", () => {
-  test("should initialize with correct length", () => {
-    const buf = new ByteArray(0, 10);
-    expect(buf.len).toBe(0);
-    expect(buf.data.length).toBe(10);
+  test("initializes with zero length", () => {
+    const buf = new ByteArray(10);
+    expect(buf.length).toBe(0);
   });
 
-  test("should grow when data exceeds capacity", () => {
-    const buf = new ByteArray(0, 2);
-    const data = Buffer.from("hello world");
-    buf.push(data);
-
-    expect(buf.len).toBe(11);
-    expect(buf.data.length).toBeGreaterThanOrEqual(11);
-    expect(buf.data.subarray(0, 11).toString()).toBe("hello world");
+  test("grows dynamically when capacity is exceeded", () => {
+    const buf = new ByteArray(4);
+    buf.push(Buffer.from("1234"));
+    buf.push(Buffer.from("56"));
+    expect(buf.length).toBe(6);
+    expect(buf.toString()).toBe("123456");
   });
 
-  test("should append multiple buffers correctly", () => {
-    const buf = new ByteArray(0, 5);
-    buf.push(Buffer.from("abc"));
-    buf.push(Buffer.from("def"));
-    expect(buf.data.subarray(0, 6).toString()).toBe("abcdef");
+  test("pop returns a correct subarray view", () => {
+    const buf = new ByteArray(16);
+    buf.push(Buffer.from("hello world"));
+    const slice = buf.pop(5);
+    expect(slice.toString()).toBe("hello");
+    expect(buf.length).toBe(6);
+    expect(buf.toString()).toBe(" world");
   });
 
-  test("should handle pop and capacity of zero correctly", () => {
-    const buf = new ByteArray(0, 0);
-    buf.push(Buffer.from("abc"));
-    buf.push(Buffer.from("def"));
-    expect(buf.data.subarray(0, 6).toString()).toBe("abcdef");
-    expect(buf.len).toBe(6);
-    buf.pop(3);
-    expect(buf.data.subarray(0, 3).toString()).toBe("def");
-    expect(buf.len).toBe(3);
+  test("resets pointers to zero when fully drained", () => {
+    const buf = new ByteArray(10);
+    buf.push(Buffer.from("test"));
+    buf.pop(4);
+    expect(buf.length).toBe(0);
+
+    buf.push(Buffer.from("a"));
+    expect(buf.toString()).toBe("a");
+  });
+
+  test("shifts data internally instead of growing when space allows", () => {
+    const buf = new ByteArray(10);
+    buf.push(Buffer.from("01234567")); // tail at 8
+    buf.pop(4); // head at 4, length is 4
+
+    // remaining space at end is 2 bytes.
+    // pushing 4 bytes should trigger a shift (copywithin) rather than a resize
+    // because total capacity (10) >= current length (4) + new data (4).
+
+    buf.push(Buffer.from("8901"));
+    expect(buf.length).toBe(8);
+    expect(buf.toString()).toBe("45678901");
   });
 });
