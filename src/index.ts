@@ -1,35 +1,76 @@
 import { Listener } from "./listener";
 import { Connection } from "./connection";
 import { ByteArray } from "./bytearray";
+import { HTTPError, HttpStatus } from "./http_status";
+import { BodyReader, readerFromReq } from "./bodyreader";
+import { HTTPRequest, parseReqHdr } from "./http_request";
 
-function getFullMessage(buf: ByteArray): null | Buffer {
+const DEFAULT_MAX_HEADER_LEN = 1024 * 100;
+
+type HTTPResponse = {
+  code: number;
+  headers: Buffer[];
+};
+
+function getFullHeaders(buf: ByteArray): null | HTTPRequestHeader {
   const currentView = buf.view;
-  const idx = currentView.indexOf("\n");
+  const idx = currentView.indexOf("\r\n\r\n");
 
-  if (idx < 0) return null;
+  if (idx < 0) {
+    if (buf.length >= DEFAULT_MAX_HEADER_LEN) {
+      throw new HTTPError(HTTPStatus.HeaderFieldsTooLarge);
+    }
+    return null;
+  }
 
-  const msg = Buffer.from(currentView.subarray(0, idx + 1));
-  buf.pop(idx + 1);
-  return msg;
+  const reqHdr = parseReqHdr(buf.view.subarray(0, idx + 4));
+  buf.pop(idx + 4);
+  return reqHdr;
 }
 
 async function serveClient(conn: Connection): Promise<void> {
-  const buf = new ByteArray(1024);
+  const buf = new ByteArray(4096);
 
-  while (true) {
-    const data = await conn.read();
-    if (data.length === 0) return;
+  try {
+    while (true) {
+      const data = await conn.read();
+      if (data.length === 0) return;
 
-    buf.push(data);
+      buf.push(data);
 
-    let msg: Buffer | null;
-    while ((msg = getFullMessage(buf)) !== null) {
-      if (msg.equals(Buffer.from("quit\n"))) {
-        await conn.write(Buffer.from("bye\n"));
-        return;
+      let reqHdr: HTTPRequest | null;
+      while ((reqHdr = getFullHeaders(buf)) !== null) {
+        console.log(`[REQUEST] ${reqHdr.method} ${reqHdr.path}`);
+
+        const reqBody: BodyReader = readerFromReq(conn, buf, reqHdr);
+
+        const contentType = reqHdr.headers.get("Content-Type");
+
+        const response = Buffer.from(
+          "HTTP/1.1 200 OK\r\n" +
+            "Content-Length: 13\r\n" +
+            "Content-Type: text/plain\r\n" +
+            "\r\n" +
+            "Hello World!\n",
+        );
+
+        await conn.write(response);
+
+        if (reqHdr.version === "HTTP/1.0") return;
+
+        let body: Buffer;
+        while ((body = await reqBody.read()).length > 0) {
+          console.log(`[BODY] ${body.toString()}`);
+        }
       }
-      await conn.write(Buffer.concat([Buffer.from("Echo: "), msg]));
     }
+  } catch (e) {
+    if (e instanceof HTTPError) {
+      await conn.write(
+        Buffer.from(`HTTP/1.1 ${e.status.code} ${e.status.message}\r\n\r\n`),
+      );
+    }
+    throw e;
   }
 }
 
