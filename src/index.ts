@@ -9,10 +9,6 @@ import { HTTPResponse, writeResponse } from "./http_response";
 const DEFAULT_MAX_HEADER_LEN = 1024 * 100;
 
 function getFullHeaders(buf: ByteArray): null | HTTPRequest {
-  if (buf.length >= DEFAULT_MAX_HEADER_LEN) {
-    throw new HTTPError(HTTPStatus.HeaderFieldsTooLarge);
-  }
-
   const currentView = buf.view;
   const idx = currentView.indexOf("\r\n\r\n");
 
