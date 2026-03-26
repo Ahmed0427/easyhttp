@@ -6,7 +6,7 @@ import { BodyReader, readerFromReq, readerFromMemory } from "./bodyreader";
 import { HTTPRequest, parseReqHdr } from "./http_request";
 import { HTTPResponse, writeResponse } from "./http_response";
 
-const DEFAULT_MAX_HEADER_LEN = 1024 * 100;
+const DEFAULT_MAX_HEADER_LEN = 1024 * 32;
 
 function getFullHeaders(buf: ByteArray): null | HTTPRequest {
   const currentView = buf.view;
