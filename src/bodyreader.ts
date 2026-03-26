@@ -1,4 +1,5 @@
 import { HTTPRequest } from "./http_request";
+import { HTTPError, HTTPStatus } from "./http_status";
 
 export type BodyReader = {
   length: number; // -1 if unknown (chunked)
@@ -21,7 +22,7 @@ export function readerFromReq(
   const bodyAllowed = !(req.method === "GET" || req.method === "HEAD");
 
   const chunked =
-    req.headers.get("Transfer-Encoding")?.equals("chunked") || false;
+    req.headers.get("transfer-encoding")?.toLowerCase() === "chunked";
 
   if (!bodyAllowed && (bodyLen > 0 || chunked)) {
     throw new HTTPError(HTTPStatus.BadRequest);
