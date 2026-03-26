@@ -10,7 +10,7 @@ function splitLines(data: Buffer): Buffer[] {
   let start = 0;
   while (start < data.length) {
     const end = data.indexOf("\r\n", start);
-    if (end < 0) break; // End of header reached
+    if (end < 0) break;
     lines.push(data.subarray(start, end));
     start = end + 2;
   }
@@ -34,7 +34,7 @@ function parseRequestLine(data: Buffer): [string, Buffer, string] {
 
 export function parseReqHdr(data: Buffer): HTTPRequest {
   const lines = splitLines(data);
-  if (lines.length === 0) throw new HTTPError(HttpStatus.BadRequest);
+  if (lines.length === 0) throw new HTTPError(HTTPStatus.BadRequest);
 
   const [method, path, version] = parseRequestLine(lines[0]);
   const headers = new Map<string, string>();
@@ -45,7 +45,7 @@ export function parseReqHdr(data: Buffer): HTTPRequest {
     if (line.length === 0) continue;
 
     const sep = line.indexOf(":".charCodeAt(0));
-    if (sep <= 0) throw new HTTPError(HttpStatus.BadRequest);
+    if (sep <= 0) throw new HTTPError(HTTPStatus.BadRequest);
 
     const key = line.subarray(0, sep).toString("ascii").trim();
     const val = line

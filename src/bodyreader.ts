@@ -32,12 +32,45 @@ export function readerFromReq(
   }
 
   if (bodyLen >= 0) {
-    return readerFromConnLength(conn, buf, bodyLen);
+    return readerFromContentLength(conn, buf, bodyLen);
   } else if (chunked) {
     throw new HTTPError(HTTPStatus.NotImplemented);
   } else {
     throw new HTTPError(HTTPStatus.NotImplemented);
   }
+}
+
+function readerFromContentLength(
+  conn: Connection,
+  buf: ByteArray,
+  remain: number,
+): BodyReader {
+  return {
+    length: remain,
+    read: async (): Promise<Buffer> => {
+      if (remain === 0) {
+        return Buffer.from("");
+      }
+
+      if (buf.length === 0) {
+        const data = await conn.read();
+        buf.push(data);
+
+        if (data.length === 0) {
+          throw new Error("Unexpected EOF from HTTP body");
+        }
+      }
+
+      const consume = Math.min(buf.length, remain);
+
+      remain -= consume;
+
+      const data = Buffer.from(buf.view.subarray(0, consume));
+      buf.pop(consume);
+
+      return data;
+    },
+  };
 }
 
 function readerFromConnLength(
@@ -69,6 +102,21 @@ function readerFromConnLength(
       buf.pop(consume);
 
       return data;
+    },
+  };
+}
+
+export function readerFromMemory(buf: Buffer): BodyReader {
+  let done = false;
+  return {
+    length: buf.length,
+    read: async (): Promise<Buffer> => {
+      if (done) {
+        return Buffer.from("");
+      } else {
+        done = true;
+        return buf;
+      }
     },
   };
 }

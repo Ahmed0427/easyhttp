@@ -1,16 +1,12 @@
 import { Listener } from "./listener";
 import { Connection } from "./connection";
 import { ByteArray } from "./bytearray";
-import { HTTPError, HttpStatus } from "./http_status";
-import { BodyReader, readerFromReq } from "./bodyreader";
+import { HTTPError, HTTPStatus } from "./http_status";
+import { BodyReader, readerFromReq, readerFromMemory } from "./bodyreader";
 import { HTTPRequest, parseReqHdr } from "./http_request";
+import { HTTPResponse, writeResponse } from "./http_response";
 
 const DEFAULT_MAX_HEADER_LEN = 1024 * 100;
-
-type HTTPResponse = {
-  code: number;
-  headers: Buffer[];
-};
 
 function getFullHeaders(buf: ByteArray): null | HTTPRequestHeader {
   const currentView = buf.view;
@@ -44,17 +40,12 @@ async function serveClient(conn: Connection): Promise<void> {
 
         const reqBody: BodyReader = readerFromReq(conn, buf, reqHdr);
 
-        const contentType = reqHdr.headers.get("Content-Type");
-
-        const response = Buffer.from(
-          "HTTP/1.1 200 OK\r\n" +
-            "Content-Length: 13\r\n" +
-            "Content-Type: text/plain\r\n" +
-            "\r\n" +
-            "Hello World!\n",
-        );
-
-        await conn.write(response);
+        const respBody = readerFromMemory(Buffer.from("Hello World"));
+        const resp: HTTPResponse = {
+          status: HTTPStatus.OK,
+          headers: new Map<string, string>(),
+        };
+        await writeResponse(conn, resp, respBody);
 
         if (reqHdr.version === "HTTP/1.0") return;
 

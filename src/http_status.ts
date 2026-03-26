@@ -1,4 +1,4 @@
-export const HttpStatus = {
+export const HTTPStatus = {
   // 1xx Informational
   Continue: { code: 100, message: "Continue" },
   SwitchingProtocols: { code: 101, message: "Switching Protocols" },
