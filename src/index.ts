@@ -8,7 +8,11 @@ import { HTTPResponse, writeResponse } from "./http_response";
 
 const DEFAULT_MAX_HEADER_LEN = 1024 * 100;
 
-function getFullHeaders(buf: ByteArray): null | HTTPRequestHeader {
+function getFullHeaders(buf: ByteArray): null | HTTPRequest {
+  if (buf.length >= DEFAULT_MAX_HEADER_LEN) {
+    throw new HTTPError(HTTPStatus.HeaderFieldsTooLarge);
+  }
+
   const currentView = buf.view;
   const idx = currentView.indexOf("\r\n\r\n");
 
@@ -40,12 +44,11 @@ async function serveClient(conn: Connection): Promise<void> {
 
         const reqBody: BodyReader = readerFromReq(conn, buf, reqHdr);
 
-        const respBody = readerFromMemory(Buffer.from("Hello World"));
         const resp: HTTPResponse = {
           status: HTTPStatus.OK,
           headers: new Map<string, string>(),
         };
-        await writeResponse(conn, resp, respBody);
+        await writeResponse(conn, resp, reqBody);
 
         if (reqHdr.version === "HTTP/1.0") return;
 
@@ -58,9 +61,14 @@ async function serveClient(conn: Connection): Promise<void> {
   } catch (e) {
     if (e instanceof HTTPError) {
       await conn.write(
-        Buffer.from(`HTTP/1.1 ${e.status.code} ${e.status.message}\r\n\r\n`),
+        Buffer.from(
+          `HTTP/1.1 ${e.status.code} ${e.status.message}\r\nConnection: close\r\n\r\n`,
+        ),
       );
+      console.warn(`[INFO] Client error ${e.status.code}: ${e.status.message}`);
+      return;
     }
+
     throw e;
   }
 }
