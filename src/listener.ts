@@ -11,7 +11,7 @@ export class Listener {
   constructor(host: string, port: number) {
     this.backlog = [];
     this.pendingAccepts = [];
-    this.server = createServer({ pauseOnConnect: true });
+    this.server = createServer({ noDelay: true, pauseOnConnect: true });
     this.setupEvents();
     this.server.listen({ host: host, port: port });
   }
