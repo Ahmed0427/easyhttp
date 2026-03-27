@@ -16,7 +16,7 @@ export class ByteArray {
   }
 
   get view(): Buffer {
-    return Buffer.from(this.buffer.subarray(this.head, this.tail));
+    return this.buffer.subarray(this.head, this.tail);
   }
 
   push(src: Buffer): void {
