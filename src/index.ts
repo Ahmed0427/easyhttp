@@ -109,11 +109,7 @@ async function main() {
       handleSocket(socket);
     }
   } catch (err: any) {
-    if (err) {
-      console.error("[ERROR] Run loop failed:", err);
-    } else {
-      console.log("[INFO] server is down");
-    }
+    console.error("[ERROR] Run loop failed:", err);
   }
 }
 
