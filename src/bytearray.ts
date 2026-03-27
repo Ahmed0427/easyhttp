@@ -11,24 +11,29 @@ export class ByteArray {
     return this.tail - this.head;
   }
 
+  get capacity(): number {
+    return this.buffer.length;
+  }
+
   get view(): Buffer {
-    return this.buffer.subarray(this.head, this.tail);
+    return Buffer.from(this.buffer.subarray(this.head, this.tail));
   }
 
   push(src: Buffer): void {
-    const required = this.tail + src.length;
+    if (src.length === 0) return;
 
-    if (required > this.buffer.length) {
-      this.ensureCapacity(src.length);
-    }
-
+    this.ensureCapacity(src.length);
     src.copy(this.buffer, this.tail);
     this.tail += src.length;
   }
 
   pop(n: number): Buffer {
-    const amount = Math.min(n, this.length);
-    const result = this.buffer.subarray(this.head, this.head + amount);
+    const amount = Math.max(0, Math.min(n, this.length));
+    if (amount === 0) return Buffer.allocUnsafe(0);
+
+    const result = Buffer.from(
+      this.buffer.subarray(this.head, this.head + amount),
+    );
     this.head += amount;
 
     if (this.head === this.tail) {
@@ -38,23 +43,45 @@ export class ByteArray {
     return result;
   }
 
-  private ensureCapacity(addedLen: number): void {
-    const currentLen = this.length;
+  clear(): void {
+    this.head = 0;
+    this.tail = 0;
+  }
 
-    if (this.buffer.length >= currentLen + addedLen) {
-      this.buffer.copyWithin(0, this.head, this.tail);
-    } else {
-      const newCap = Math.max(this.buffer.length * 2, currentLen + addedLen);
-      const newBuf = Buffer.allocUnsafe(newCap);
-      this.buffer.copy(newBuf, 0, this.head, this.tail);
-      this.buffer = newBuf;
+  toString(encoding: BufferEncoding = "utf8"): string {
+    return this.buffer.toString(encoding, this.head, this.tail);
+  }
+
+  private ensureCapacity(required: number): void {
+    const totalFree = this.buffer.length - this.length;
+    const endFree = this.buffer.length - this.tail;
+
+    if (totalFree >= required && endFree < required) {
+      this.compact();
+      return;
     }
 
-    this.tail = currentLen;
+    if (totalFree < required) {
+      this.resize(required);
+    }
+  }
+
+  private compact(): void {
+    if (this.head === 0) return;
+    this.buffer.copyWithin(0, this.head, this.tail);
+    this.tail = this.length;
     this.head = 0;
   }
 
-  toString(): string {
-    return this.buffer.toString("utf8", this.head, this.tail);
+  private resize(required: number): void {
+    const newCapacity = Math.max(
+      this.buffer.length * 2,
+      this.length + required,
+    );
+    const newBuffer = Buffer.allocUnsafe(newCapacity);
+    this.buffer.copy(newBuffer, 0, this.head, this.tail);
+    this.buffer = newBuffer;
+    this.tail = this.length;
+    this.head = 0;
   }
 }
