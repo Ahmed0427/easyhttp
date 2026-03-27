@@ -8,6 +8,8 @@ import { HTTPResponse, writeResponse } from "./http_response";
 
 const DEFAULT_MAX_HEADER_LEN = 1024 * 32;
 
+const activeConnections = new Set<Connection>();
+
 function getFullHeaders(buf: ByteArray): null | HTTPRequest {
   const currentView = buf.view;
   const idx = currentView.indexOf("\r\n\r\n");
@@ -75,6 +77,7 @@ async function handleSocket(socket: net.Socket) {
   );
 
   const conn = new Connection(socket);
+  activeConnections.add(conn);
 
   try {
     await serveClient(conn);
@@ -82,6 +85,7 @@ async function handleSocket(socket: net.Socket) {
     console.error("[ERROR] Client exception:", e);
   } finally {
     conn.close();
+    activeConnections.delete(conn);
     console.log(
       `[INFO] connection ended: ${socket.remoteAddress}:${socket.remotePort}`,
     );
@@ -93,8 +97,6 @@ async function main() {
   console.log("[INFO] Listening on http://127.0.0.1:8080");
 
   const shutdown = async () => {
-    console.log("\n[INFO] Shutting down server...");
-    await listener.close();
     process.exit(0);
   };
 
