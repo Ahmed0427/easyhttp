@@ -47,7 +47,7 @@ export class Listener {
   close(): Promise<void> {
     while (this.pendingAccepts.length > 0) {
       const { reject } = this.pendingAccepts.shift()!;
-      reject();
+      reject(new Error("Listener closed"));
     }
     return new Promise((res, rej) => {
       this.server.close((err) => {

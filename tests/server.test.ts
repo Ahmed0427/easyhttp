@@ -1,6 +1,6 @@
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
-import { randomBytes } from "node:crypto";
-import { createConnection } from "node:net";
+import { randomBytes } from "crypto";
+import { createConnection } from "net";
 import { spawn, type Subprocess } from "bun";
 
 const PORT = 8080;
@@ -99,5 +99,43 @@ describe("EasyHTTP Server Integration", () => {
     });
 
     expect(response).toContain("431 Request Header Fields Too Large");
+  });
+
+  test("Chunked Encoding - Should handle Chunked Transfer Encoding", async () => {
+    const responseData = await new Promise<string>((resolve, reject) => {
+      const client = createConnection({ port: PORT }, () => {
+        // Write the request
+        client.write("POST /echo HTTP/1.1\r\n");
+        client.write("Host: localhost\r\n");
+        client.write("Transfer-Encoding: chunked\r\n");
+        client.write("\r\n");
+
+        // Chunk 1: "Hello" (5 bytes)
+        client.write("5\r\nHello\r\n");
+        // Chunk 2: " World" (6 bytes -> '6' in hex)
+        client.write("6\r\n World\r\n");
+        // Terminator
+        client.write("0\r\n\r\n");
+      });
+
+      let buffer = "";
+      client.on("data", (data) => {
+        buffer += data.toString();
+
+        if (buffer.endsWith("0\r\n\r\n")) {
+          client.end();
+          resolve(buffer);
+        }
+      });
+
+      client.on("error", (err) => {
+        client.destroy();
+        reject(err);
+      });
+    });
+
+    expect(responseData).toContain("200 OK");
+    expect(responseData).toContain("Hello");
+    expect(responseData).toContain("World");
   });
 });

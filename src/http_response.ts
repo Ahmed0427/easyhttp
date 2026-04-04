@@ -43,20 +43,27 @@ export async function writeResponse(
   body: BodyReader,
 ): Promise<void> {
   if (typeof body.length !== "number" || body.length < 0) {
-    // TODO: implement chunked encoding
-    throw new HTTPError(HttpStatus.NotImplemented);
+    resp.headers.set("Transfer-Encoding", "chunked");
+  } else {
+    resp.headers.set("Content-Length", body.length.toString());
   }
-
-  resp.headers.set("Content-Length", body.length.toString());
 
   const headerBuf = encodeResponse(resp);
   await conn.write(headerBuf);
 
-  while (true) {
-    const data = await body.read();
+  const crnl = Buffer.from("\r\n");
+  for (let done = false; !done; ) {
+    let data = await body.read();
     if (data.length === 0) {
-      break;
+      done = true;
     }
-    await conn.write(data);
+    if (resp.headers.get("Transfer-Encoding") === "chunked") {
+      const separator = Buffer.from("\r\n");
+      const sizeHex = Buffer.from(data.length.toString(16));
+      data = Buffer.concat([sizeHex, separator, data, separator]);
+    }
+    if (data.length > 0) {
+      await conn.write(data);
+    }
   }
 }

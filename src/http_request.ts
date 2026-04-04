@@ -5,6 +5,22 @@ export type HTTPRequest = {
   headers: Map<string, string>;
 };
 
+export function printRequest(req: HTTPRequest): void {
+  const lines: string[] = [];
+
+  lines.push(`${req.method} ${req.path} ${req.version}`);
+
+  for (const [key, value] of req.headers) {
+    lines.push(`${key}: ${value}`);
+  }
+
+  const separator = "—".repeat(Math.max(...lines.map((l) => l.length), 20));
+
+  console.log(`\n${separator}`);
+  console.log(lines.join("\n"));
+  console.log(`${separator}\n`);
+}
+
 function splitLines(data: Buffer): Buffer[] {
   const lines: Buffer[] = [];
   let start = 0;

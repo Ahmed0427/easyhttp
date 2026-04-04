@@ -1,5 +1,6 @@
 import { HTTPRequest } from "./http_request";
 import { HTTPError, HTTPStatus } from "./http_status";
+import { BufferGenerator, readChunks } from "./buffer_generator";
 
 export type BodyReader = {
   length: number; // -1 if unknown (chunked)
@@ -22,7 +23,7 @@ export function readerFromReq(
   const bodyAllowed = !(req.method === "GET" || req.method === "HEAD");
 
   const chunked =
-    req.headers.get("transfer-encoding")?.toLowerCase() === "chunked";
+    req.headers.get("Transfer-Encoding")?.toLowerCase() === "chunked";
 
   if (!bodyAllowed && (bodyLen > 0 || chunked)) {
     throw new HTTPError(HTTPStatus.BadRequest);
@@ -35,7 +36,7 @@ export function readerFromReq(
   if (bodyLen >= 0) {
     return readerFromContentLength(conn, buf, bodyLen);
   } else if (chunked) {
-    throw new HTTPError(HTTPStatus.NotImplemented);
+    return readerFromGenerator(readChunks(conn, buf));
   } else {
     throw new HTTPError(HTTPStatus.NotImplemented);
   }
@@ -54,7 +55,7 @@ function readerFromContentLength(
       }
 
       if (buf.length === 0) {
-        const data = await conn.read();
+        let data = await conn.read();
         buf.push(data);
 
         if (data.length === 0) {
@@ -66,40 +67,7 @@ function readerFromContentLength(
 
       remain -= consume;
 
-      const data = Buffer.from(buf.view.subarray(0, consume));
-      buf.pop(consume);
-
-      return data;
-    },
-  };
-}
-
-function readerFromConnLength(
-  conn: Connection,
-  buf: ByteArray,
-  remain: number,
-): BodyReader {
-  return {
-    length: remain,
-    read: async (): Promise<Buffer> => {
-      if (remain === 0) {
-        return Buffer.from("");
-      }
-
-      if (buf.length === 0) {
-        const data = await conn.read();
-        buf.push(data);
-
-        if (data.length === 0) {
-          throw new Error("Unexpected EOF from HTTP body");
-        }
-      }
-
-      const consume = Math.min(buf.length, remain);
-
-      remain -= consume;
-
-      const data = Buffer.from(buf.view.subarray(0, consume));
+      let data = Buffer.from(buf.view.subarray(0, consume));
       buf.pop(consume);
 
       return data;
@@ -118,6 +86,18 @@ export function readerFromMemory(buf: Buffer): BodyReader {
         done = true;
         return buf;
       }
+    },
+  };
+}
+
+export function readerFromGenerator(gen: BufferGenerator): BodyReader {
+  let done = false;
+  return {
+    length: -1,
+    read: async (): Promise<Buffer> => {
+      let y = await gen.next();
+      if (y.done) return Buffer.from("");
+      else return y.value;
     },
   };
 }

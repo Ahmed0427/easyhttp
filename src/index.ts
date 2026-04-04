@@ -1,26 +1,24 @@
+import { Socket } from "net";
 import { Listener } from "./listener";
 import { Connection } from "./connection";
 import { ByteArray } from "./bytearray";
 import { HTTPError, HTTPStatus } from "./http_status";
-import { BodyReader, readerFromReq, readerFromMemory } from "./bodyreader";
-import { HTTPRequest, parseReqHdr } from "./http_request";
+import { HTTPRequest, parseReqHdr, printRequest } from "./http_request";
 import { HTTPResponse, writeResponse } from "./http_response";
+import { readerFromReq, readerFromGenerator } from "./bodyreader";
+import { gen } from "./buffer_generator";
 
 const DEFAULT_MAX_HEADER_LEN = 1024 * 32;
-
-const activeConnections = new Set<Connection>();
 
 function getFullHeaders(buf: ByteArray): null | HTTPRequest {
   const currentView = buf.view;
   const idx = currentView.indexOf("\r\n\r\n");
-
   if (idx < 0) {
     if (buf.length >= DEFAULT_MAX_HEADER_LEN) {
       throw new HTTPError(HTTPStatus.HeaderFieldsTooLarge);
     }
     return null;
   }
-
   const reqHdr = parseReqHdr(buf.view.subarray(0, idx + 4));
   buf.pop(idx + 4);
   return reqHdr;
@@ -28,67 +26,74 @@ function getFullHeaders(buf: ByteArray): null | HTTPRequest {
 
 async function serveClient(conn: Connection): Promise<void> {
   const buf = new ByteArray(4096);
+  while (true) {
+    const data = await conn.read();
+    if (data.length === 0) break;
+    buf.push(data);
 
-  try {
-    while (true) {
-      const data = await conn.read();
-      if (data.length === 0) return;
+    let reqHdr: HTTPRequest | null;
+    while ((reqHdr = getFullHeaders(buf)) !== null) {
+      console.log(`[REQUEST] ${reqHdr.method} ${reqHdr.path}`);
 
-      buf.push(data);
+      const reqBody = readerFromReq(conn, buf, reqHdr);
 
-      let reqHdr: HTTPRequest | null;
-      while ((reqHdr = getFullHeaders(buf)) !== null) {
-        console.log(`[REQUEST] ${reqHdr.method} ${reqHdr.path}`);
+      const resp: HTTPResponse = {
+        status: HTTPStatus.OK,
+        headers: new Map<string, string>(),
+      };
 
-        const reqBody: BodyReader = readerFromReq(conn, buf, reqHdr);
-
-        const resp: HTTPResponse = {
-          status: HTTPStatus.OK,
-          headers: new Map<string, string>(),
-        };
+      if (reqHdr.path === "/gen") {
+        await writeResponse(conn, resp, readerFromGenerator(gen()));
+      } else {
         await writeResponse(conn, resp, reqBody);
+      }
 
-        if (reqHdr.version === "HTTP/1.0") return;
-
-        let body: Buffer;
-        while ((body = await reqBody.read()).length > 0) {
-          console.log(`[BODY] ${body.toString()}`);
-        }
+      // HTTP/1.0 got no body
+      // other than that drain the body we don't need it for now
+      if (reqHdr.version !== "HTTP/1.0") {
+        while ((await reqBody.read()).length > 0) {}
       }
     }
-  } catch (e) {
-    if (e instanceof HTTPError) {
-      await conn.write(
-        Buffer.from(
-          `HTTP/1.1 ${e.status.code} ${e.status.message}\r\nConnection: close\r\n\r\n`,
-        ),
-      );
-      console.warn(`[INFO] Client error ${e.status.code}: ${e.status.message}`);
-      return;
-    }
-
-    throw e;
   }
 }
 
-async function handleSocket(socket: net.Socket) {
-  console.log(
-    `[INFO] connection started: ${socket.remoteAddress}:${socket.remotePort}`,
+function isConnectionError(e: unknown): boolean {
+  return (
+    e instanceof Error &&
+    "code" in e &&
+    (e.code === "ERR_SOCKET_CLOSED" ||
+      e.code === "ECONNRESET" ||
+      e.code === "EPIPE")
   );
+}
 
+async function handleSocket(socket: Socket) {
+  const addr = `${socket.remoteAddress}:${socket.remotePort}`;
+  console.log(`[INFO] Connection started: ${addr}`);
   const conn = new Connection(socket);
-  activeConnections.add(conn);
-
   try {
     await serveClient(conn);
   } catch (e) {
-    console.error("[ERROR] Client exception:", e);
+    if (e instanceof HTTPError) {
+      console.warn(`[CLIENT_ERR] ${e.status.code}: ${e.status.message}`);
+
+      const buf = new ByteArray(1024);
+
+      const body = e.status.message;
+      const statusHdr = `${e.status.code} ${e.status.message}`;
+
+      buf.push(Buffer.from(`HTTP/1.1 ${statusHdr} \r\n`));
+      buf.push(Buffer.from(`Connection: close\r\n`));
+      buf.push(Buffer.from(`Content-Length: ${body.length}\r\n`));
+      buf.push(Buffer.from(`\r\n${body}`));
+
+      await conn.write(buf.view).catch(() => {});
+    } else if (!isConnectionError(e) && e instanceof Error) {
+      console.error("[ERROR]", e);
+    }
   } finally {
     conn.close();
-    activeConnections.delete(conn);
-    console.log(
-      `[INFO] connection ended: ${socket.remoteAddress}:${socket.remotePort}`,
-    );
+    console.log(`[INFO] connection ended: ${addr}`);
   }
 }
 
@@ -96,20 +101,20 @@ async function main() {
   const listener = new Listener("127.0.0.1", 8080);
   console.log("[INFO] Listening on http://127.0.0.1:8080");
 
-  const shutdown = async () => {
-    process.exit(0);
-  };
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.once("SIGINT", () => {
+    console.log("\n[INFO] Shutting down...");
+    listener.close().catch(() => {});
+  });
 
   try {
     while (true) {
       const socket = await listener.accept();
-      handleSocket(socket);
+      handleSocket(socket).catch((err) =>
+        console.error("[FATAL] Uncaught in socket handler:", err),
+      );
     }
-  } catch (err: any) {
-    console.error("[ERROR] Run loop failed:", err);
+  } catch {
+    // listener was closed
   }
 }
 
