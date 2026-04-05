@@ -2,10 +2,10 @@ import { Connetion } from "./connection";
 import { HTTPStatus } from "./http_status";
 import { BodyReader } from "./bodyreader";
 
-export type HTTPResponse = {
+export interface HTTPResponse {
   status: HTTPStatus;
   headers: Map<string, string>;
-};
+}
 
 function encodeResponse(resp: HTTPResponse): Buffer {
   const version = "HTTP/1.1";

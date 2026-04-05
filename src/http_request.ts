@@ -1,9 +1,9 @@
-export type HTTPRequest = {
+export interface HTTPRequest {
   method: string;
   path: string;
   version: string;
   headers: Map<string, string>;
-};
+}
 
 export function printRequest(req: HTTPRequest): void {
   const lines: string[] = [];

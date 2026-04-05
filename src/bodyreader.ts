@@ -2,10 +2,10 @@ import { HTTPRequest } from "./http_request";
 import { HTTPError, HTTPStatus } from "./http_status";
 import { BufferGenerator, readChunks } from "./buffer_generator";
 
-export type BodyReader = {
+export interface BodyReader {
   length: number; // -1 if unknown (chunked)
   read: () => Promise<Buffer>; // returns 0-length Buffer on EOF
-};
+}
 
 export function readerFromReq(
   conn: Connection,
