@@ -138,8 +138,12 @@ export async function readerFromFile(path: string): Promise<BodyReader> {
     f = null;
 
     return reader;
-  } catch (exception) {
-    throw exception;
+  } catch (e) {
+    if (e.code === "ENOENT") {
+      throw new HTTPError(HTTPStatus.NotFound);
+    } else {
+      throw e;
+    }
   } finally {
     await f?.close();
   }

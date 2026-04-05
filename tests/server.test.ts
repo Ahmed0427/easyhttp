@@ -1,7 +1,8 @@
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
-import { randomBytes } from "crypto";
-import { createConnection } from "net";
+import { writeFile, unlink } from "node:fs/promises";
 import { spawn, type Subprocess } from "bun";
+import { createConnection } from "net";
+import { randomBytes } from "crypto";
 
 const PORT = 8080;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -137,5 +138,43 @@ describe("EasyHTTP Server Integration", () => {
     expect(responseData).toContain("200 OK");
     expect(responseData).toContain("Hello");
     expect(responseData).toContain("World");
+  });
+
+  test("Static File - Should serve a text file correctly", async () => {
+    const filename = "test_text.txt";
+    const content = "Hello, this is a test file on disk.";
+    await writeFile(filename, content);
+
+    try {
+      const res = await fetch(`${BASE_URL}/file/${filename}`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(content);
+      expect(res.headers.get("Content-Length")).toBe(content.length.toString());
+    } finally {
+      await unlink(filename);
+    }
+  });
+
+  test("Static File - Should return 404 for non-existent files", async () => {
+    const res = await fetch(`${BASE_URL}/file/ghost_file_${Date.now()}.txt`);
+    expect(res.status).toBe(404);
+  });
+
+  test("Static File - Should serve large binary files without corruption", async () => {
+    // 128KB of random data ensures the BodyReader loop runs multiple times
+    const filename = "test_data.bin";
+    const payload = randomBytes(1024 * 128);
+    await writeFile(filename, payload);
+
+    try {
+      const res = await fetch(`${BASE_URL}/file/${filename}`);
+      expect(res.status).toBe(200);
+
+      const body = await res.arrayBuffer();
+      expect(new Uint8Array(body)).toEqual(new Uint8Array(payload));
+      expect(res.headers.get("Content-Length")).toBe(payload.length.toString());
+    } finally {
+      await unlink(filename);
+    }
   });
 });

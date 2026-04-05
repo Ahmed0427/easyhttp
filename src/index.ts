@@ -64,7 +64,7 @@ async function serveClient(conn: Connection): Promise<void> {
         await writeResponse(conn, resp, readerFromGenerator(gen()));
       } else if (reqHdr.path.startsWith("/file/")) {
         const filePath = `./${reqHdr.path.slice("/files".length)}`;
-        const fileReader = readerFromFile(filePath);
+        const fileReader = await readerFromFile(filePath);
         await writeResponse(conn, resp, fileReader);
       } else {
         await writeResponse(conn, resp, reqBody);
