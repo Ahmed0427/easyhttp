@@ -5,8 +5,12 @@ import { ByteArray } from "./bytearray";
 import { HTTPError, HTTPStatus } from "./http_status";
 import { HTTPRequest, parseReqHdr, printRequest } from "./http_request";
 import { HTTPResponse, writeResponse } from "./http_response";
-import { readerFromReq, readerFromGenerator } from "./bodyreader";
 import { gen } from "./buffer_generator";
+import {
+  readerFromReq,
+  readerFromGenerator,
+  readerFromFile,
+} from "./bodyreader";
 
 const DEFAULT_MAX_HEADER_LEN = 1024 * 32;
 
@@ -22,6 +26,20 @@ function getFullHeaders(buf: ByteArray): null | HTTPRequest {
   const reqHdr = parseReqHdr(buf.view.subarray(0, idx + 4));
   buf.pop(idx + 4);
   return reqHdr;
+}
+
+async function serveResponseFromStatus(conn: Connection, status: HTTPStatus) {
+  const buf = new ByteArray(1024);
+
+  const body = status.message;
+  const statusHdr = `${status.code} ${status.message}`;
+
+  buf.push(Buffer.from(`HTTP/1.1 ${statusHdr} \r\n`));
+  buf.push(Buffer.from(`Connection: close\r\n`));
+  buf.push(Buffer.from(`Content-Length: ${body.length}\r\n`));
+  buf.push(Buffer.from(`\r\n${body}`));
+
+  await conn.write(buf.view).catch(() => {});
 }
 
 async function serveClient(conn: Connection): Promise<void> {
@@ -44,6 +62,10 @@ async function serveClient(conn: Connection): Promise<void> {
 
       if (reqHdr.path === "/gen") {
         await writeResponse(conn, resp, readerFromGenerator(gen()));
+      } else if (reqHdr.path.startsWith("/file/")) {
+        const filePath = `./${reqHdr.path.slice("/files".length)}`;
+        const fileReader = readerFromFile(filePath);
+        await writeResponse(conn, resp, fileReader);
       } else {
         await writeResponse(conn, resp, reqBody);
       }
@@ -75,21 +97,10 @@ async function handleSocket(socket: Socket) {
     await serveClient(conn);
   } catch (e) {
     if (e instanceof HTTPError) {
-      console.warn(`[CLIENT_ERR] ${e.status.code}: ${e.status.message}`);
-
-      const buf = new ByteArray(1024);
-
-      const body = e.status.message;
-      const statusHdr = `${e.status.code} ${e.status.message}`;
-
-      buf.push(Buffer.from(`HTTP/1.1 ${statusHdr} \r\n`));
-      buf.push(Buffer.from(`Connection: close\r\n`));
-      buf.push(Buffer.from(`Content-Length: ${body.length}\r\n`));
-      buf.push(Buffer.from(`\r\n${body}`));
-
-      await conn.write(buf.view).catch(() => {});
+      console.warn(`[CLIENT_ERROR] ${e.status.code}: ${e.status.message}`);
+      await serveResponseFromStatus(conn, e.status);
     } else if (!isConnectionError(e) && e instanceof Error) {
-      console.error("[ERROR]", e);
+      console.error("[ERROR]", e.message);
     }
   } finally {
     conn.close();

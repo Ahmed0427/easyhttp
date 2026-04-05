@@ -1,3 +1,4 @@
+import * as fs from "fs/promises";
 import { HTTPRequest } from "./http_request";
 import { HTTPError, HTTPStatus } from "./http_status";
 import { BufferGenerator, readChunks } from "./buffer_generator";
@@ -5,6 +6,7 @@ import { BufferGenerator, readChunks } from "./buffer_generator";
 export interface BodyReader {
   length: number; // -1 if unknown (chunked)
   read: () => Promise<Buffer>; // returns 0-length Buffer on EOF
+  close?: () => Promise<void>; // optional cleanup to release file handles.
 }
 
 export function readerFromReq(
@@ -100,4 +102,45 @@ export function readerFromGenerator(gen: BufferGenerator): BodyReader {
       else return y.value;
     },
   };
+}
+
+export async function readerFromFile(path: string): Promise<BodyReader> {
+  let got = 0;
+  let f: fs.FileHandle | null = null;
+
+  try {
+    f = await fs.open(path, "r");
+    const stat = await f.stat();
+
+    if (!stat.isFile()) {
+      throw new HTTPError(HTTPStatus.BadRequest);
+    }
+
+    const size = stat.size;
+    const handle = f;
+
+    const reader: BodyReader = {
+      length: size,
+      read: async (): Promise<Buffer> => {
+        const res = await handle.read();
+        got += res.bytesRead;
+
+        if (got > size || (got < size && res.bytesRead === 0)) {
+          throw new Error("file size changed, abandon it!");
+        }
+        return res.buffer.subarray(0, res.bytesRead);
+      },
+      close: async () => {
+        await handle.close();
+      },
+    };
+
+    f = null;
+
+    return reader;
+  } catch (exception) {
+    throw exception;
+  } finally {
+    await f?.close();
+  }
 }
