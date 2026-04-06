@@ -107,6 +107,7 @@ export function readerFromGenerator(gen: BufferGenerator): BodyReader {
 export async function readerFromFile(path: string): Promise<BodyReader> {
   let got = 0;
   let f: fs.FileHandle | null = null;
+  const buf = Buffer.allocUnsafe(65536);
 
   try {
     f = await fs.open(path, "r");
@@ -122,13 +123,13 @@ export async function readerFromFile(path: string): Promise<BodyReader> {
     const reader: BodyReader = {
       length: size,
       read: async (): Promise<Buffer> => {
-        const res = await handle.read();
+        const res = await handle.read({ buffer: buf });
         got += res.bytesRead;
 
         if (got > size || (got < size && res.bytesRead === 0)) {
           throw new Error("file size changed, abandon it!");
         }
-        return res.buffer.subarray(0, res.bytesRead);
+        return buf.subarray(0, res.bytesRead);
       },
       close: async () => {
         await handle.close();
