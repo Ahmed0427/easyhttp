@@ -65,7 +65,7 @@ function readerFromContentLength(
         buf.push(data);
 
         if (data.length === 0) {
-          throw new Error("Unexpected EOF from HTTP body");
+          throw new HTTPError(HTTPStatus.BadRequest);
         }
       }
 
@@ -170,7 +170,6 @@ export async function readerFromFile(
 
         if (res.bytesRead === 0) {
           throw new HTTPError(HTTPStatus.InternalServerError);
-          // throw new Error("file size changed");
         }
 
         offset += res.bytesRead;
@@ -188,7 +187,7 @@ export async function readerFromFile(
   } catch (e) {
     if (e.code === "ENOENT") {
       throw new HTTPError(HTTPStatus.NotFound);
-    } else throw e;
+    } else throw new HTTPError(HTTPStatus.InternalServerError);
   } finally {
     await f?.close();
   }

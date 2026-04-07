@@ -47,7 +47,7 @@ export async function* readChunks(
     while (remain > 0) {
       if (buf.length === 0) {
         let data = await conn.read();
-        if (!data || data.length === 0) throw new Error("Unexpected EOF");
+        if (!data || data.length === 0) new HTTPError(HTTPStatus.BadRequest);
         buf.push(data);
       }
       const consume = Math.min(remain, buf.length);
@@ -57,7 +57,7 @@ export async function* readChunks(
 
     while (buf.length < 2) {
       let data = await conn.read();
-      if (!data || data.length === 0) throw new Error("Unexpected EOF");
+      if (!data || data.length === 0) new HTTPError(HTTPStatus.BadRequest);
       buf.push(data);
     }
 
