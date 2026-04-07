@@ -7,6 +7,7 @@ export const HTTPStatus = {
   OK: { code: 200, message: "OK" },
   Created: { code: 201, message: "Created" },
   NoContent: { code: 204, message: "No Content" },
+  PartialContent: { code: 206, message: "Partial Content" },
 
   // 3xx Redirection
   MovedPermanently: { code: 301, message: "Moved Permanently" },
@@ -19,6 +20,7 @@ export const HTTPStatus = {
   NotFound: { code: 404, message: "Not Found" },
   MethodNotAllowed: { code: 405, message: "Method Not Allowed" },
   PayloadTooLarge: { code: 413, message: "Payload Too Large" },
+  RangeNotSatisfiable: { code: 416, message: "Range Not Satisfiable" },
   HeaderFieldsTooLarge: {
     code: 431,
     message: "Request Header Fields Too Large",
@@ -32,8 +34,12 @@ export const HTTPStatus = {
 } as const;
 
 export class HTTPError extends Error {
-  constructor(public status: HttpStatusType) {
+  constructor(
+    public status: HttpStatusType,
+    public fileSize: number,
+  ) {
     super(`${status.code} ${status.message}`);
     this.name = "HTTPError";
+    this.fileSize = fileSize;
   }
 }

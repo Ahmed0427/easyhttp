@@ -16,7 +16,7 @@ describe("EasyHTTP Server Integration", () => {
       stderr: "inherit",
     });
 
-    // give the server a moment to bind to the port
+    // wait a bit for the server to bind to the port
     await new Promise((resolve) => setTimeout(resolve, 500));
   });
 
@@ -25,20 +25,13 @@ describe("EasyHTTP Server Integration", () => {
     serverProcess.kill();
   });
 
-  /**
-   * basic functionality
-   */
   test("GET / - Should return 200 OK", async () => {
     const res = await fetch(`${BASE_URL}/`);
     expect(res.status).toBe(200);
   });
 
-  /**
-   * echo & streaming logic
-   * verifies that the bodyreader is correctly piping data
-   */
   test("POST - Should echo back large binary data", async () => {
-    const payload = randomBytes(1024 * 64); // 64KB random data
+    const payload = randomBytes(1024 * 64); // 64kb random data
     const res = await fetch(`${BASE_URL}/`, {
       method: "POST",
       body: payload,
@@ -48,15 +41,10 @@ describe("EasyHTTP Server Integration", () => {
     expect(new Uint8Array(body)).toEqual(new Uint8Array(payload));
   });
 
-  /**
-   * connection pipelining
-   * this is the "gold standard" test for custom http servers.
-   * it ensures your loop correctly handles the next request remaining in the buffer.
-   */
   test("Connection Pipelining - Multiple requests on one socket", async () => {
     const responseData = await new Promise<string>((resolve, reject) => {
       const client = createConnection({ port: PORT }, () => {
-        // Write two requests immediately back-to-back
+        // write two requests immediately back-to-back
         client.write(
           "GET /first HTTP/1.1\r\nContent-Length: 0\r\n\r\n" +
             "GET /second HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
@@ -66,7 +54,7 @@ describe("EasyHTTP Server Integration", () => {
       let buffer = "";
       client.on("data", (data) => {
         buffer += data.toString();
-        // Check if we have received two "OK" status lines
+        // we must get two "OK" status lines
         const occurrences = (buffer.match(/HTTP\/1.1 200 OK/g) || []).length;
         if (occurrences === 2) {
           client.end();
@@ -81,10 +69,6 @@ describe("EasyHTTP Server Integration", () => {
     expect(responseData).toContain("HTTP/1.1 200 OK");
   });
 
-  /**
-   * robustness: oversized headers
-   * triggers the 431 header fields too large logic
-   */
   test("Error Handling - Should reject massive headers", async () => {
     const bigHeader = "X-Long-Header: " + "A".repeat(1024 * 128) + "\r\n";
 
@@ -105,17 +89,13 @@ describe("EasyHTTP Server Integration", () => {
   test("Chunked Encoding - Should handle Chunked Transfer Encoding", async () => {
     const responseData = await new Promise<string>((resolve, reject) => {
       const client = createConnection({ port: PORT }, () => {
-        // Write the request
         client.write("POST /echo HTTP/1.1\r\n");
         client.write("Host: localhost\r\n");
         client.write("Transfer-Encoding: chunked\r\n");
         client.write("\r\n");
 
-        // Chunk 1: "Hello" (5 bytes)
         client.write("5\r\nHello\r\n");
-        // Chunk 2: " World" (6 bytes -> '6' in hex)
-        client.write("6\r\n World\r\n");
-        // Terminator
+        client.write("5\r\nWorld\r\n");
         client.write("0\r\n\r\n");
       });
 
@@ -161,7 +141,7 @@ describe("EasyHTTP Server Integration", () => {
   });
 
   test("Static File - Should serve large binary files without corruption", async () => {
-    // 128KB of random data ensures the BodyReader loop runs multiple times
+    // 128kb of random data ensures the bodyreader loop runs multiple times
     const filename = "test_data.bin";
     const payload = randomBytes(1024 * 128);
     await writeFile(filename, payload);
@@ -173,6 +153,106 @@ describe("EasyHTTP Server Integration", () => {
       const body = await res.arrayBuffer();
       expect(new Uint8Array(body)).toEqual(new Uint8Array(payload));
       expect(res.headers.get("Content-Length")).toBe(payload.length.toString());
+    } finally {
+      await unlink(filename);
+    }
+  });
+
+  test("Range - bytes=0-9 returns first 10 bytes", async () => {
+    const filename = "range_test.txt";
+    const content = "0123456789abcdefghij"; // 20 bytes
+    await writeFile(filename, content);
+    try {
+      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+        headers: { Range: "bytes=0-9" },
+      });
+      expect(res.headers.get("Accept-Ranges")).toBe("bytes");
+      expect(res.status).toBe(206);
+      expect(await res.text()).toBe("0123456789");
+      expect(res.headers.get("Content-Range")).toBe("bytes 0-9/20");
+      expect(res.headers.get("Content-Length")).toBe("10");
+    } finally {
+      await unlink(filename);
+    }
+  });
+
+  test("Range - completely out of range returns 416", async () => {
+    const filename = "range_test.txt";
+    const content = "0123456789"; // 10 bytes
+    await writeFile(filename, content);
+    try {
+      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+        headers: { Range: "bytes=20-30" },
+      });
+      expect(res.status).toBe(416);
+      expect(res.headers.get("Content-Range")).toBe("bytes */10");
+    } finally {
+      await unlink(filename);
+    }
+  });
+
+  test("Range - invalid syntax (4-3) server ignore Range and send full file", async () => {
+    const filename = "range_test.txt";
+    const content = "0123456789abcdefghij";
+    await writeFile(filename, content);
+    try {
+      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+        headers: { Range: "bytes=4-3" },
+      });
+      // according to RFC, invalid ranges cause the header to be ignored -> full response 200
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(content);
+      expect(res.headers.get("Content-Range")).toBeNull();
+    } finally {
+      await unlink(filename);
+    }
+  });
+  test("Range - bytes=10- returns from byte 10 to EOF", async () => {
+    const filename = "range_test.txt";
+    const content = "0123456789abcdefghij"; // 20 bytes
+    await writeFile(filename, content);
+    try {
+      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+        headers: { Range: "bytes=10-" },
+      });
+      expect(res.status).toBe(206);
+      expect(await res.text()).toBe("abcdefghij");
+      expect(res.headers.get("Content-Range")).toBe("bytes 10-19/20");
+      expect(res.headers.get("Content-Length")).toBe("10");
+    } finally {
+      await unlink(filename);
+    }
+  });
+
+  test("Range - bytes=-5 returns last 5 bytes", async () => {
+    const filename = "range_test.txt";
+    const content = "0123456789abcdefghij"; // 20 bytes
+    await writeFile(filename, content);
+    try {
+      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+        headers: { Range: "bytes=-5" },
+      });
+      expect(res.status).toBe(206);
+      expect(res.headers.get("Content-Range")).toBe("bytes 15-19/20");
+      expect(await res.text()).toBe("fghij");
+      expect(res.headers.get("Content-Length")).toBe("5");
+    } finally {
+      await unlink(filename);
+    }
+  });
+
+  test("Range - bytes=15-30 (beyond EOF) returns bytes 15-19 only", async () => {
+    const filename = "range_test.txt";
+    const content = "0123456789abcdefghij"; // 20 bytes
+    await writeFile(filename, content);
+    try {
+      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+        headers: { Range: "bytes=15-30" },
+      });
+      expect(res.status).toBe(206);
+      expect(await res.text()).toBe("fghij");
+      expect(res.headers.get("Content-Range")).toBe("bytes 15-19/20");
+      expect(res.headers.get("Content-Length")).toBe("5");
     } finally {
       await unlink(filename);
     }

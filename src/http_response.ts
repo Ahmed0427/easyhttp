@@ -48,6 +48,14 @@ export async function writeResponse(
     resp.headers.set("Content-Length", body.length.toString());
   }
 
+  if (body.isRange) {
+    resp.headers.set(
+      "Content-Range",
+      `bytes ${body.startRange}-${body.endRange - 1}/${body.size}`,
+    );
+    resp.status = HTTPStatus.PartialContent;
+  }
+
   const headerBuf = encodeResponse(resp);
   await conn.write(headerBuf);
 

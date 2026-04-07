@@ -5,6 +5,7 @@ import { ByteArray } from "./bytearray";
 import { HTTPError, HTTPStatus } from "./http_status";
 import { HTTPRequest, parseReqHdr, printRequest } from "./http_request";
 import { HTTPResponse, writeResponse } from "./http_response";
+import { parseBytesRanges } from "../src/http_ranges";
 import { gen } from "./buffer_generator";
 import {
   readerFromReq,
@@ -28,7 +29,11 @@ function getFullHeaders(buf: ByteArray): null | HTTPRequest {
   return reqHdr;
 }
 
-async function serveResponseFromStatus(conn: Connection, status: HTTPStatus) {
+async function serveResponseFromStatus(
+  conn: Connection,
+  status: HTTPStatus,
+  fileSize: number,
+) {
   const buf = new ByteArray(1024);
 
   const body = status.message;
@@ -37,6 +42,9 @@ async function serveResponseFromStatus(conn: Connection, status: HTTPStatus) {
   buf.push(Buffer.from(`HTTP/1.1 ${statusHdr} \r\n`));
   buf.push(Buffer.from(`Connection: close\r\n`));
   buf.push(Buffer.from(`Content-Length: ${body.length}\r\n`));
+  if (status == HTTPStatus.RangeNotSatisfiable) {
+    buf.push(Buffer.from(`Content-Range: bytes */${fileSize}\r\n`));
+  }
   buf.push(Buffer.from(`\r\n${body}`));
 
   await conn.write(buf.view).catch(() => {});
@@ -60,11 +68,21 @@ async function serveClient(conn: Connection): Promise<void> {
         headers: new Map<string, string>(),
       };
 
+      resp.headers.set("Accept-Ranges", "bytes");
+
       if (reqHdr.path === "/gen") {
         await writeResponse(conn, resp, readerFromGenerator(gen()));
       } else if (reqHdr.path.startsWith("/file/")) {
         const filePath = `./${reqHdr.path.slice("/files".length)}`;
-        const fileReader = await readerFromFile(filePath);
+        let ranges = parseBytesRanges(reqHdr.headers.get("Range"));
+        if (!ranges || ranges.length === 0) {
+          ranges = [[0, Number.MAX_SAFE_INTEGER]];
+        }
+        const fileReader = await readerFromFile(
+          filePath,
+          ranges[0][0],
+          ranges[0][1],
+        );
         await writeResponse(conn, resp, fileReader);
         await fileReader.close();
       } else {
@@ -99,7 +117,7 @@ async function handleSocket(socket: Socket) {
   } catch (e) {
     if (e instanceof HTTPError) {
       console.warn(`[CLIENT_ERROR] ${e.status.code}: ${e.status.message}`);
-      await serveResponseFromStatus(conn, e.status);
+      await serveResponseFromStatus(conn, e.status, e.fileSize);
     } else if (!isConnectionError(e) && e instanceof Error) {
       console.error("[ERROR]", e.message);
     }
