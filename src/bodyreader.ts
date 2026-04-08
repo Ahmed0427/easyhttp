@@ -187,7 +187,11 @@ export async function readerFromFile(
   } catch (e) {
     if (e.code === "ENOENT") {
       throw new HTTPError(HTTPStatus.NotFound);
-    } else throw new HTTPError(HTTPStatus.InternalServerError);
+    } else if (!(e instanceof HTTPError)) {
+      throw new HTTPError(HTTPStatus.InternalServerError);
+    } else {
+      throw e;
+    }
   } finally {
     await f?.close();
   }
