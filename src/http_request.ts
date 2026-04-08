@@ -48,7 +48,7 @@ function parseRequestLine(data: Buffer): [string, Buffer, string] {
   return [method, path, version];
 }
 
-export function parseReqHdr(data: Buffer): HTTPRequest {
+export function parseRequest(data: Buffer): HTTPRequest {
   const lines = splitLines(data);
   if (lines.length === 0) throw new HTTPError(HTTPStatus.BadRequest);
 

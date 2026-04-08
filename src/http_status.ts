@@ -34,12 +34,8 @@ export const HTTPStatus = {
 } as const;
 
 export class HTTPError extends Error {
-  constructor(
-    public status: HttpStatusType,
-    public fileSize: number,
-  ) {
+  constructor(public status: HttpStatusType) {
     super(`${status.code} ${status.message}`);
     this.name = "HTTPError";
-    this.fileSize = fileSize;
   }
 }

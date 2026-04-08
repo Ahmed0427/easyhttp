@@ -1,6 +1,6 @@
 import { Connetion } from "./connection";
 import { HTTPStatus } from "./http_status";
-import { BodyReader } from "./bodyreader";
+import { Reader } from "./reader";
 
 export interface HTTPResponse {
   status: HTTPStatus;
@@ -40,38 +40,25 @@ function encodeResponse(resp: HTTPResponse): Buffer {
 export async function writeResponse(
   conn: Connection,
   resp: HTTPResponse,
-  body: BodyReader,
+  reader: Reader,
 ): Promise<void> {
-  if (typeof body.length !== "number" || body.length < 0) {
-    resp.headers.set("Transfer-Encoding", "chunked");
-  } else {
-    resp.headers.set("Content-Length", body.length.toString());
-  }
+  resp.headers.set("Content-Length", reader.length.toString());
 
-  if (body.isRange) {
-    resp.headers.set(
-      "Content-Range",
-      `bytes ${body.startRange}-${body.endRange - 1}/${body.size}`,
-    );
+  if (reader.isRange) {
+    const val = `bytes ${reader.startRange}-${reader.endRange - 1}/${reader.size}`;
+    resp.headers.set("Content-Range", val);
     resp.status = HTTPStatus.PartialContent;
+  } else if (reader.isOutOfRange) {
+    resp.headers.set("Content-Range", `bytes */${reader.size}`);
+    resp.status = HTTPStatus.RangeNotSatisfiable;
   }
 
   const headerBuf = encodeResponse(resp);
   await conn.write(headerBuf);
 
-  const crnl = Buffer.from("\r\n");
-  for (let done = false; !done; ) {
-    let data = await body.read();
-    if (data.length === 0) {
-      done = true;
-    }
-    if (resp.headers.get("Transfer-Encoding") === "chunked") {
-      const separator = Buffer.from("\r\n");
-      const sizeHex = Buffer.from(data.length.toString(16));
-      data = Buffer.concat([sizeHex, separator, data, separator]);
-    }
-    if (data.length > 0) {
-      await conn.write(data);
-    }
+  for (;;) {
+    let data = await reader.read();
+    if (data.length === 0) break;
+    await conn.write(data);
   }
 }
