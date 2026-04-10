@@ -1,5 +1,7 @@
 import * as fs from "fs/promises";
+import * as path from "path";
 import { HTTPError, HTTPStatus } from "./http_status";
+import { logger } from "./logger";
 
 export interface Reader {
   readonly length: number; // bytes to send; 0 for out-of-range
@@ -23,18 +25,60 @@ const READ_BUFFER_SIZE = 65_536;
  *   - end === MAX_SAFE_INTEGER - read to end of file
  */
 export async function readerFromFile(
-  path: string,
+  req_path: string,
   start: number,
   end: number,
 ): Promise<Reader> {
   let handle: fs.FileHandle | null = null;
 
   try {
-    handle = await fs.open(path, "r");
+    handle = await fs.open(req_path, "r");
     const stat = await handle.stat();
 
     if (!stat.isFile()) {
-      throw new HTTPError(HTTPStatus.BadRequest);
+      await handle.close();
+
+      const entries = await fs.readdir(req_path, { withFileTypes: true });
+
+      const listItems = entries
+        .map((item) => {
+          const isDir = item.isDirectory();
+          const suffix = isDir ? "/" : "";
+          const nameWithSuffix = `${item.name}${suffix}`;
+          const hrefPath = path.join(item.name);
+          const cls = `class="${isDir ? "dir" : "file"}`;
+          return `<li ${cls} "><a href="${hrefPath}">${nameWithSuffix}</a></li>`;
+        })
+        .join("");
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Index of ${req_path}</title>
+          <style>
+            body { font-family: sans-serif; padding: 2rem; line-height: 1.5; color: #333; }
+            h1 { font-size: 1.2rem; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+            ul { list-style: none; padding: 0; }
+            li { padding: 4px 8px; display: flex; align-items: center; }
+            li:hover { background: #f0f0f0; }
+            a { text-decoration: none; color: #0066cc; width: 100%; display: block; }
+            a:hover { text-decoration: underline; }
+            .dir { font-weight: bold; }
+            .dir a { color: #d4a017; } /* Gold/Folder color */
+          </style>
+        </head>
+        <body>
+          <h1>Index of ${req_path}</h1>
+          <ul>
+            ${listItems}
+          </ul>
+        </body>
+        </html>
+      `;
+
+      return dirListingReader(html);
     }
 
     const fileSize = stat.size;
@@ -75,6 +119,7 @@ export async function readerFromFile(
       throw new HTTPError(HTTPStatus.NotFound);
     }
 
+    logger.error(e.message);
     throw new HTTPError(HTTPStatus.InternalServerError);
   }
 }
@@ -130,6 +175,17 @@ function fileRangeReader(
     close: async () => {
       await handle.close();
     },
+  };
+}
+
+function dirListingReader(buf: Buffer): Reader {
+  return {
+    length: buf.length,
+    read: async (): Promise<Buffer> => {
+      return buf;
+    },
+
+    close: async () => {},
   };
 }
 

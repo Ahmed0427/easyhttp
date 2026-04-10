@@ -60,8 +60,6 @@ async function serveClient(conn: Connection): Promise<void> {
         throw new HTTPError(HTTPStatus.Forbidden);
       }
 
-      logger.info(`requestedPath: ${requestedPath}`);
-
       const resp: HTTPResponse = {
         status: HTTPStatus.OK,
         headers: new Map([["Accept-Ranges", "bytes"]]),
