@@ -71,7 +71,13 @@ async function serveClient(conn: Connection): Promise<void> {
       const [start, end] =
         rangeParsed.length === 2 ? rangeParsed : [0, Number.MAX_SAFE_INTEGER];
 
-      const fileReader = await readerFromFile(requestedPath, start, end);
+      const fileReader = await readerFromFile(
+        requestedPath,
+        req.path,
+        start,
+        end,
+      );
+
       try {
         await writeResponse(conn, resp, fileReader);
       } finally {

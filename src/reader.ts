@@ -25,27 +25,28 @@ const READ_BUFFER_SIZE = 65_536;
  *   - end === MAX_SAFE_INTEGER - read to end of file
  */
 export async function readerFromFile(
-  req_path: string,
+  resolvedPath: string,
+  reqPath: string,
   start: number,
   end: number,
 ): Promise<Reader> {
   let handle: fs.FileHandle | null = null;
 
   try {
-    handle = await fs.open(req_path, "r");
+    handle = await fs.open(resolvedPath, "r");
     const stat = await handle.stat();
 
     if (!stat.isFile()) {
       await handle.close();
 
-      const entries = await fs.readdir(req_path, { withFileTypes: true });
+      const entries = await fs.readdir(resolvedPath, { withFileTypes: true });
 
       const listItems = entries
         .map((item) => {
           const isDir = item.isDirectory();
           const suffix = isDir ? "/" : "";
           const nameWithSuffix = `${item.name}${suffix}`;
-          const hrefPath = path.join(item.name);
+          const hrefPath = path.join(reqPath, item.name);
           const cls = `class="${isDir ? "dir" : "file"}`;
           return `<li ${cls} "><a href="${hrefPath}">${nameWithSuffix}</a></li>`;
         })
@@ -56,7 +57,7 @@ export async function readerFromFile(
         <html>
         <head>
           <meta charset="utf-8">
-          <title>Index of ${req_path}</title>
+          <title>Index of ${reqPath}</title>
           <style>
             body { font-family: sans-serif; padding: 2rem; line-height: 1.5; color: #333; }
             h1 { font-size: 1.2rem; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
@@ -70,7 +71,7 @@ export async function readerFromFile(
           </style>
         </head>
         <body>
-          <h1>Index of ${req_path}</h1>
+          <h1>Index of ${reqPath}</h1>
           <ul>
             ${listItems}
           </ul>
