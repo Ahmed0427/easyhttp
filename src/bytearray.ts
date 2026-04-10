@@ -21,7 +21,6 @@ export class ByteArray {
 
   push(src: Buffer): void {
     if (src.length === 0) return;
-
     this.ensureCapacity(src.length);
     src.copy(this.buffer, this.tail);
     this.tail += src.length;
@@ -40,6 +39,7 @@ export class ByteArray {
       this.head = 0;
       this.tail = 0;
     }
+
     return result;
   }
 
@@ -68,8 +68,9 @@ export class ByteArray {
 
   private compact(): void {
     if (this.head === 0) return;
+    const len = this.length;
     this.buffer.copyWithin(0, this.head, this.tail);
-    this.tail = this.length;
+    this.tail = len;
     this.head = 0;
   }
 
@@ -79,9 +80,10 @@ export class ByteArray {
       this.length + required,
     );
     const newBuffer = Buffer.allocUnsafe(newCapacity);
+    const len = this.length;
     this.buffer.copy(newBuffer, 0, this.head, this.tail);
     this.buffer = newBuffer;
-    this.tail = this.length;
+    this.tail = len;
     this.head = 0;
   }
 }

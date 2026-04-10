@@ -3,122 +3,119 @@ import { Listener } from "./listener";
 import { Connection } from "./connection";
 import { ByteArray } from "./bytearray";
 import { HTTPError, HTTPStatus } from "./http_status";
-import { HTTPRequest, parseRequest, printRequest } from "./http_request";
+import { HTTPRequest, parseRequest, parseByteRange } from "./http_request";
 import { HTTPResponse, writeResponse } from "./http_response";
+import { writeErrorResponse } from "./http_response";
 import { readerFromFile } from "./reader";
-import { parseBytesRanges } from "../src/http_ranges";
+import { logger } from "./logger";
 
-const DEFAULT_MAX_HEADER_LEN = 1024 * 32;
+const MAX_HEADER_BYTES = 1024 * 32;
+const HOST = "127.0.0.1";
+const PORT = 8080;
+const CWD = ".";
 
-function getFullRequest(buf: ByteArray): null | HTTPRequest {
-  const currentView = buf.view;
-  const idx = currentView.indexOf("\r\n\r\n");
-  if (idx < 0) {
-    if (buf.length >= DEFAULT_MAX_HEADER_LEN) {
+function extractRequest(buf: ByteArray): HTTPRequest | null {
+  const view = buf.view;
+  const headerEnd = view.indexOf("\r\n\r\n");
+
+  if (headerEnd < 0) {
+    if (buf.length >= MAX_HEADER_BYTES) {
       throw new HTTPError(HTTPStatus.HeaderFieldsTooLarge);
     }
     return null;
   }
-  const req = parseRequest(buf.view.subarray(0, idx + 4));
-  buf.pop(idx + 4);
+
+  const req = parseRequest(view.subarray(0, headerEnd + 4));
+  buf.pop(headerEnd + 4);
   return req;
-}
-
-async function serveResponseFromStatus(conn: Connection, status: HTTPStatus) {
-  const buf = new ByteArray(1024);
-
-  const body = status.message;
-  const statusHdr = `${status.code} ${status.message}`;
-
-  buf.push(Buffer.from(`HTTP/1.1 ${statusHdr} \r\n`));
-  buf.push(Buffer.from(`Connection: close\r\n`));
-  buf.push(Buffer.from(`Content-Length: ${body.length}\r\n`));
-  buf.push(Buffer.from(`\r\n${body}`));
-
-  await conn.write(buf.view).catch(() => {});
 }
 
 async function serveClient(conn: Connection): Promise<void> {
   const buf = new ByteArray(4096);
+
   while (true) {
     const data = await conn.read();
-    if (data.length === 0) break;
+    if (data.length === 0) break; // client disconnected
     buf.push(data);
 
     let req: HTTPRequest | null;
-    while ((req = getFullRequest(buf)) !== null) {
-      console.log(`[REQUEST] ${req.method} ${req.path}`);
+    while ((req = extractRequest(buf)) !== null) {
+      logger.info(`${req.method} ${req.path}`);
 
       const resp: HTTPResponse = {
         status: HTTPStatus.OK,
-        headers: new Map<string, string>(),
+        headers: new Map([["Accept-Ranges", "bytes"]]),
       };
 
-      resp.headers.set("Accept-Ranges", "bytes");
+      const filePath = `${CWD}/${req.path.slice("/files".length)}`;
 
-      const filePath = `./${req.path.slice("/files".length)}`;
-      let ranges = parseBytesRanges(req.headers.get("Range"));
-      if (!ranges || ranges.length === 0) {
-        ranges = [[0, Number.MAX_SAFE_INTEGER]];
+      const rangeHeader = req.headers.get("Range");
+      const rangeParsed = parseByteRange(rangeHeader);
+      const [start, end] =
+        rangeParsed.length === 2 ? rangeParsed : [0, Number.MAX_SAFE_INTEGER];
+
+      const fileReader = await readerFromFile(filePath, start, end);
+      try {
+        await writeResponse(conn, resp, fileReader);
+      } finally {
+        await fileReader.close();
       }
-      const fileReader = await readerFromFile(
-        filePath,
-        ranges[0][0],
-        ranges[0][1],
-      );
-      await writeResponse(conn, resp, fileReader);
-      await fileReader.close();
     }
   }
 }
 
-function isConnectionError(e: unknown): boolean {
+function isConnectionResetError(e: unknown): boolean {
   return (
     e instanceof Error &&
     "code" in e &&
-    (e.code === "ERR_SOCKET_CLOSED" ||
-      e.code === "ECONNRESET" ||
-      e.code === "EPIPE")
+    ((e as NodeJS.ErrnoException).code === "ERR_SOCKET_CLOSED" ||
+      (e as NodeJS.ErrnoException).code === "ECONNRESET" ||
+      (e as NodeJS.ErrnoException).code === "EPIPE")
   );
 }
 
-async function handleSocket(socket: Socket) {
-  const addr = `${socket.remoteAddress}:${socket.remotePort}`;
-  console.log(`[INFO] Connection started: ${addr}`);
+async function handleSocket(socket: Socket): Promise<void> {
   const conn = new Connection(socket);
+  const addr = conn.remoteAddress;
+
+  logger.info(`Connection opened: ${addr}`);
+
   try {
     await serveClient(conn);
-  } catch (e) {
+  } catch (e: unknown) {
     if (e instanceof HTTPError) {
-      console.warn(`[CLIENT_ERROR] ${e.status.code}: ${e.status.message}`);
-      await serveResponseFromStatus(conn, e.status);
-    } else if (!isConnectionError(e) && e instanceof Error) {
-      console.error("[ERROR]", e.message);
+      logger.warn(
+        `Client error ${e.status.code} ${e.status.message} — ${addr}`,
+      );
+      await writeErrorResponse(conn, e.status);
+    } else if (isConnectionResetError(e)) {
+      logger.info(`Connection reset by peer: ${addr}`);
+    } else {
+      const message = e instanceof Error ? e.message : String(e);
+      logger.error(`Unhandled error for ${addr}: ${message}`);
     }
   } finally {
     conn.close();
-    console.log(`[INFO] connection ended: ${addr}`);
+    logger.info(`Connection closed: ${addr}`);
   }
 }
 
-async function main() {
-  const listener = new Listener("127.0.0.1", 8080);
-  console.log("[INFO] Listening on http://127.0.0.1:8080");
+async function main(): Promise<void> {
+  const listener = new Listener(HOST, PORT);
+  logger.info(`Listening on http://${HOST}:${PORT}`);
 
   process.once("SIGINT", () => {
-    console.log("\n[INFO] Shutting down...");
-    listener.close().catch(() => {});
+    logger.info("Shutting down...");
+    listener
+      .close()
+      .catch((err) => logger.error(`Error closing listener: ${err}`));
   });
 
-  try {
-    while (true) {
-      const socket = await listener.accept();
-      handleSocket(socket).catch((err) =>
-        console.error("[FATAL] Uncaught in socket handler:", err),
-      );
-    }
-  } catch {
-    // listener was closed
+  for (;;) {
+    const socket = await listener.accept();
+    handleSocket(socket).catch((err) =>
+      logger.error(`Uncaught error in socket handler: ${err}`),
+    );
   }
 }
 

@@ -33,8 +33,10 @@ export const HTTPStatus = {
   ServiceUnavailable: { code: 503, message: "Service Unavailable" },
 } as const;
 
+export type HTTPStatusType = (typeof HTTPStatus)[keyof typeof HTTPStatus];
+
 export class HTTPError extends Error {
-  constructor(public status: HttpStatusType) {
+  constructor(public readonly status: HTTPStatusType) {
     super(`${status.code} ${status.message}`);
     this.name = "HTTPError";
   }

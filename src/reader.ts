@@ -1,114 +1,138 @@
 import * as fs from "fs/promises";
-import { HTTPRequest } from "./http_request";
 import { HTTPError, HTTPStatus } from "./http_status";
 
 export interface Reader {
-  startRange?: number;
-  endRange?: number;
-  size?: number;
-  isRange?: boolean;
-  isOutOfRange?: boolean;
+  readonly length: number; // bytes to send; 0 for out-of-range
+  readonly size?: number; // full file size
+  readonly endRange?: number; // exclusive
+  readonly startRange?: number;
+  readonly isRange?: boolean;
+  readonly isOutOfRange?: boolean;
 
-  length: number; // -1 if unknown (chunked)
-  read: () => Promise<Buffer>; // returns 0-length Buffer on EOF
-  close?: () => Promise<void>; // optional cleanup to release file handles.
+  read(): Promise<Buffer>; // returns 0-length Buffer on EOF
+  close(): Promise<void>;
 }
 
+const READ_BUFFER_SIZE = 65_536;
+
+/**
+ * opens `path` and returns a reader scoped to [start, end).
+ *
+ * special values:
+ *   - start === -1             - suffix range; `end` is the suffix length
+ *   - end === MAX_SAFE_INTEGER - read to end of file
+ */
 export async function readerFromFile(
   path: string,
   start: number,
-  end: number, // exclusive btw
+  end: number,
 ): Promise<Reader> {
-  let f: fs.FileHandle | null = null;
-  const isSuffixRange = start === -1;
-  start = Math.max(0, start);
-  let offset = start;
-  let got = 0;
-  const buf = Buffer.allocUnsafe(65536);
+  let handle: fs.FileHandle | null = null;
 
   try {
-    f = await fs.open(path, "r");
-    const stat = await f.stat();
+    handle = await fs.open(path, "r");
+    const stat = await handle.stat();
 
     if (!stat.isFile()) {
       throw new HTTPError(HTTPStatus.BadRequest);
     }
 
     const fileSize = stat.size;
-
-    if (start >= fileSize || start < 0) {
-      // HTTPStatus.RangeNotSatisfiable;
-      const reader: Reader = {
-        isOutOfRange: true,
-        size: fileSize,
-        length: 0,
-        read: async (): Promise<Buffer> => {
-          return Buffer.alloc(0);
-        },
-        close: async () => {},
-      };
-      return reader;
-    }
-
-    let actualEnd = Math.min(end, fileSize);
+    const isSuffixRange = start === -1;
 
     if (isSuffixRange) {
-      actualEnd = fileSize;
-      start = Math.max(fileSize - end, 0);
-      offset = start;
+      const suffixLen = end;
+      start = Math.max(fileSize - suffixLen, 0);
+      end = fileSize;
     }
 
-    let isRange = end !== Number.MAX_SAFE_INTEGER;
-    isRange |= start !== 0;
+    if (start >= fileSize || start < 0) {
+      await handle.close();
+      return outOfRangeReader(fileSize);
+    }
 
+    const actualEnd = Math.min(end, fileSize);
+    const isRange = end !== Number.MAX_SAFE_INTEGER || start !== 0;
     const contentLength = actualEnd - start;
 
-    const handle = f;
+    const reader = fileRangeReader(
+      handle,
+      start,
+      actualEnd,
+      contentLength,
+      isRange,
+      fileSize,
+    );
 
-    end = actualEnd;
-    const reader: Reader = {
-      length: contentLength,
-      isRange: isRange,
-      endRange: end,
-      startRange: start,
-      size: fileSize,
-      read: async (): Promise<Buffer> => {
-        if (got >= contentLength) {
-          return Buffer.alloc(0); // EOF
-        }
-
-        const maxRead = Math.min(buf.length, contentLength - got);
-        const res = await handle.read({
-          buffer: buf,
-          position: offset,
-          length: maxRead,
-        });
-
-        if (res.bytesRead === 0) {
-          throw new HTTPError(HTTPStatus.InternalServerError);
-        }
-
-        offset += res.bytesRead;
-        got += res.bytesRead;
-
-        return buf.subarray(0, res.bytesRead);
-      },
-      close: async () => {
-        await handle.close();
-      },
-    };
-
-    f = null;
+    handle = null; // ownership transferred to reader
     return reader;
-  } catch (e) {
-    if (e.code === "ENOENT") {
+  } catch (e: unknown) {
+    await handle?.close();
+
+    if (e instanceof HTTPError) throw e;
+
+    if (isNodeError(e) && e.code === "ENOENT") {
       throw new HTTPError(HTTPStatus.NotFound);
-    } else if (!(e instanceof HTTPError)) {
-      throw new HTTPError(HTTPStatus.InternalServerError);
-    } else {
-      throw e;
     }
-  } finally {
-    await f?.close();
+
+    throw new HTTPError(HTTPStatus.InternalServerError);
   }
+}
+
+function outOfRangeReader(fileSize: number): Reader {
+  return {
+    isOutOfRange: true,
+    size: fileSize,
+    length: 0,
+    read: async () => Buffer.alloc(0),
+    close: async () => {},
+  };
+}
+
+function fileRangeReader(
+  handle: fs.FileHandle,
+  start: number,
+  end: number,
+  contentLength: number,
+  isRange: boolean,
+  fileSize: number,
+): Reader {
+  const buf = Buffer.allocUnsafe(READ_BUFFER_SIZE);
+  let offset = start;
+  let got = 0;
+
+  return {
+    length: contentLength,
+    isRange,
+    startRange: start,
+    endRange: end,
+    size: fileSize,
+
+    read: async (): Promise<Buffer> => {
+      if (got >= contentLength) return Buffer.alloc(0);
+
+      const maxRead = Math.min(buf.length, contentLength - got);
+      const result = await handle.read({
+        buffer: buf,
+        position: offset,
+        length: maxRead,
+      });
+
+      if (result.bytesRead === 0) {
+        throw new HTTPError(HTTPStatus.InternalServerError);
+      }
+
+      offset += result.bytesRead;
+      got += result.bytesRead;
+      return buf.subarray(0, result.bytesRead);
+    },
+
+    close: async () => {
+      await handle.close();
+    },
+  };
+}
+
+function isNodeError(e: unknown): e is NodeJS.ErrnoException {
+  return e instanceof Error && "code" in e;
 }
