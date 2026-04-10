@@ -8,11 +8,23 @@ import { HTTPResponse, writeResponse } from "./http_response";
 import { writeErrorResponse } from "./http_response";
 import { readerFromFile } from "./reader";
 import { logger } from "./logger";
+import { parseArgs } from "util";
+import * as path from "path";
 
+const { values } = parseArgs({
+  args: Bun.argv,
+  options: {
+    port: { type: "string", short: "p", default: "8080" },
+    dir: { type: "string", short: "d", default: process.cwd() },
+  },
+  strict: true,
+  allowPositionals: true,
+});
+
+const CWD = path.resolve(values.dir!)!;
+const PORT = parseInt(values.port!);
 const MAX_HEADER_BYTES = 1024 * 32;
-const HOST = "127.0.0.1";
-const PORT = 8080;
-const CWD = ".";
+const HOST = "0.0.0.0";
 
 function extractRequest(buf: ByteArray): HTTPRequest | null {
   const view = buf.view;
@@ -42,19 +54,26 @@ async function serveClient(conn: Connection): Promise<void> {
     while ((req = extractRequest(buf)) !== null) {
       logger.info(`${req.method} ${req.path}`);
 
+      const requestedPath = path.resolve(path.join(CWD, req.path));
+
+      if (!requestedPath.startsWith(CWD)) {
+        throw new HTTPError(HTTPStatus.Forbidden);
+      }
+
+      logger.info(`requestedPath: ${requestedPath}`);
+
       const resp: HTTPResponse = {
         status: HTTPStatus.OK,
         headers: new Map([["Accept-Ranges", "bytes"]]),
       };
 
-      const filePath = `${CWD}/${req.path.slice("/files".length)}`;
-
       const rangeHeader = req.headers.get("Range");
       const rangeParsed = parseByteRange(rangeHeader);
+
       const [start, end] =
         rangeParsed.length === 2 ? rangeParsed : [0, Number.MAX_SAFE_INTEGER];
 
-      const fileReader = await readerFromFile(filePath, start, end);
+      const fileReader = await readerFromFile(requestedPath, start, end);
       try {
         await writeResponse(conn, resp, fileReader);
       } finally {
@@ -76,7 +95,7 @@ function isConnectionResetError(e: unknown): boolean {
 
 async function handleSocket(socket: Socket): Promise<void> {
   const conn = new Connection(socket);
-  const addr = conn.remoteAddress;
+  const addr = `${socket.remoteAddress}:${socket.remotePort}`;
 
   logger.info(`Connection opened: ${addr}`);
 
@@ -102,20 +121,23 @@ async function handleSocket(socket: Socket): Promise<void> {
 
 async function main(): Promise<void> {
   const listener = new Listener(HOST, PORT);
-  logger.info(`Listening on http://${HOST}:${PORT}`);
+
+  logger.info(`Ready at port: ${PORT} (Dir: ${CWD})`);
 
   process.once("SIGINT", () => {
     logger.info("Shutting down...");
-    listener
-      .close()
-      .catch((err) => logger.error(`Error closing listener: ${err}`));
+    listener.close();
   });
 
-  for (;;) {
-    const socket = await listener.accept();
-    handleSocket(socket).catch((err) =>
-      logger.error(`Uncaught error in socket handler: ${err}`),
-    );
+  while (true) {
+    try {
+      const socket = await listener.accept();
+      handleSocket(socket).catch((err) =>
+        logger.error(`Uncaught error in socket handler: ${err}`),
+      );
+    } catch {
+      // ignore listener error when we close it
+    }
   }
 }
 

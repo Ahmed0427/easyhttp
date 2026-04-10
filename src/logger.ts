@@ -1,7 +1,7 @@
 export type LogLevel = "INFO" | "WARN" | "ERROR" | "DEBUG";
 
 function timestamp(): string {
-  return new Date().toISOString();
+  return Date.now().toString();
 }
 
 function log(level: LogLevel, message: string, context?: string): void {

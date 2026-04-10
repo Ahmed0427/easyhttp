@@ -1,11 +1,11 @@
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
 import { writeFile, unlink } from "node:fs/promises";
+import { createConnection, connect } from "net";
 import { spawn, type Subprocess } from "bun";
-import { createConnection } from "net";
 import { randomBytes } from "crypto";
 
 const PORT = 8080;
-const BASE_URL = `http://127.0.0.1:${PORT}`;
+const BASE_URL = `http://0.0.0.0:${PORT}`;
 
 describe("EasyHTTP Server Integration", () => {
   let serverProcess: Subprocess;
@@ -31,7 +31,7 @@ describe("EasyHTTP Server Integration", () => {
     await writeFile(filename, content);
 
     try {
-      const res = await fetch(`${BASE_URL}/file/${filename}`);
+      const res = await fetch(`${BASE_URL}/${filename}`);
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(content);
       expect(res.headers.get("Content-Length")).toBe(content.length.toString());
@@ -41,18 +41,17 @@ describe("EasyHTTP Server Integration", () => {
   });
 
   test("Static File - Should return 404 for non-existent files", async () => {
-    const res = await fetch(`${BASE_URL}/file/ghost_file_${Date.now()}.txt`);
+    const res = await fetch(`${BASE_URL}/ghost_file_${Date.now()}.txt`);
     expect(res.status).toBe(404);
   });
 
   test("Static File - Should serve large binary files without corruption", async () => {
-    // 128kb of random data ensures the bodyreader loop runs multiple times
     const filename = "test_data.bin";
     const payload = randomBytes(1024 * 128);
     await writeFile(filename, payload);
 
     try {
-      const res = await fetch(`${BASE_URL}/file/${filename}`);
+      const res = await fetch(`${BASE_URL}/${filename}`);
       expect(res.status).toBe(200);
 
       const body = await res.arrayBuffer();
@@ -63,12 +62,32 @@ describe("EasyHTTP Server Integration", () => {
     }
   });
 
+  test("Static File - Should block directory traversal with 403 Forbidden", async () => {
+    const promise = new Promise<string>((resolve, reject) => {
+      const client = connect(8080, "127.0.0.1", () => {
+        client.write(
+          "GET /../../../../etc/passwd HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+      });
+
+      client.on("data", (data) => {
+        resolve(data.toString());
+        client.end();
+      });
+
+      client.on("error", reject);
+    });
+
+    const response = await promise;
+    expect(response).toContain("403");
+  });
+
   test("Range - bytes=0-9 returns first 10 bytes", async () => {
     const filename = "range_test.txt";
     const content = "0123456789abcdefghij"; // 20 bytes
     await writeFile(filename, content);
     try {
-      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+      const res = await fetch(`${BASE_URL}/${filename}`, {
         headers: { Range: "bytes=0-9" },
       });
       expect(res.headers.get("Accept-Ranges")).toBe("bytes");
@@ -86,7 +105,7 @@ describe("EasyHTTP Server Integration", () => {
     const content = "0123456789"; // 10 bytes
     await writeFile(filename, content);
     try {
-      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+      const res = await fetch(`${BASE_URL}/${filename}`, {
         headers: { Range: "bytes=20-30" },
       });
       expect(res.status).toBe(416);
@@ -101,7 +120,7 @@ describe("EasyHTTP Server Integration", () => {
     const content = "0123456789abcdefghij";
     await writeFile(filename, content);
     try {
-      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+      const res = await fetch(`${BASE_URL}/${filename}`, {
         headers: { Range: "bytes=4-3" },
       });
       // according to RFC, invalid ranges cause the header to be ignored -> full response 200
@@ -117,7 +136,7 @@ describe("EasyHTTP Server Integration", () => {
     const content = "0123456789abcdefghij"; // 20 bytes
     await writeFile(filename, content);
     try {
-      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+      const res = await fetch(`${BASE_URL}/${filename}`, {
         headers: { Range: "bytes=10-" },
       });
       expect(res.status).toBe(206);
@@ -134,7 +153,7 @@ describe("EasyHTTP Server Integration", () => {
     const content = "0123456789abcdefghij"; // 20 bytes
     await writeFile(filename, content);
     try {
-      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+      const res = await fetch(`${BASE_URL}/${filename}`, {
         headers: { Range: "bytes=-5" },
       });
       expect(res.status).toBe(206);
@@ -151,7 +170,7 @@ describe("EasyHTTP Server Integration", () => {
     const content = "0123456789abcdefghij"; // 20 bytes
     await writeFile(filename, content);
     try {
-      const res = await fetch(`${BASE_URL}/file/${filename}`, {
+      const res = await fetch(`${BASE_URL}/${filename}`, {
         headers: { Range: "bytes=15-30" },
       });
       expect(res.status).toBe(206);
