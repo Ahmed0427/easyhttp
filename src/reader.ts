@@ -2,12 +2,14 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { HTTPError, HTTPStatus } from "./http_status";
 import { logger } from "./logger";
+import { getMimeType } from "./mime_type";
 
 export interface Reader {
   readonly length: number; // bytes to send; 0 for out-of-range
   readonly size?: number; // full file size
   readonly endRange?: number; // exclusive
   readonly startRange?: number;
+  readonly contentType?: string;
   readonly isRange?: boolean;
   readonly isOutOfRange?: boolean;
 
@@ -56,19 +58,7 @@ export async function readerFromFile(
         <!DOCTYPE html>
         <html>
         <head>
-          <meta charset="utf-8">
           <title>Index of ${reqPath}</title>
-          <style>
-            body { font-family: sans-serif; padding: 2rem; line-height: 1.5; color: #333; }
-            h1 { font-size: 1.2rem; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
-            ul { list-style: none; padding: 0; }
-            li { padding: 4px 8px; display: flex; align-items: center; }
-            li:hover { background: #f0f0f0; }
-            a { text-decoration: none; color: #0066cc; width: 100%; display: block; }
-            a:hover { text-decoration: underline; }
-            .dir { font-weight: bold; }
-            .dir a { color: #d4a017; } /* Gold/Folder color */
-          </style>
         </head>
         <body>
           <h1>Index of ${reqPath}</h1>
@@ -79,7 +69,7 @@ export async function readerFromFile(
         </html>
       `;
 
-      return dirListingReader(html);
+      return dirListingReader(Buffer.from(html));
     }
 
     const fileSize = stat.size;
@@ -101,6 +91,7 @@ export async function readerFromFile(
     const contentLength = actualEnd - start;
 
     const reader = fileRangeReader(
+      resolvedPath,
       handle,
       start,
       actualEnd,
@@ -136,6 +127,7 @@ function outOfRangeReader(fileSize: number): Reader {
 }
 
 function fileRangeReader(
+  filePath: string,
   handle: fs.FileHandle,
   start: number,
   end: number,
@@ -148,6 +140,7 @@ function fileRangeReader(
   let got = 0;
 
   return {
+    contentType: getMimeType(filePath),
     length: contentLength,
     isRange,
     startRange: start,
@@ -181,6 +174,7 @@ function fileRangeReader(
 
 function dirListingReader(buf: Buffer): Reader {
   return {
+    contentType: "text/html",
     length: buf.length,
     read: async (): Promise<Buffer> => {
       return buf;

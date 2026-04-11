@@ -52,6 +52,10 @@ export async function writeResponse(
     resp.status = HTTPStatus.PartialContent;
   }
 
+  if (reader.contentType) {
+    resp.headers.set("Content-Type", reader.contentType);
+  }
+
   await conn.write(encodeResponse(resp));
 
   for (;;) {
