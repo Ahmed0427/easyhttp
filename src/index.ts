@@ -3,10 +3,9 @@ import { Listener } from "./listener";
 import { Connection } from "./connection";
 import { ByteArray } from "./bytearray";
 import { HTTPError, HTTPStatus } from "./http_status";
-import { HTTPRequest, parseRequest, parseByteRange } from "./http_request";
-import { HTTPResponse, writeResponse } from "./http_response";
-import { writeErrorResponse } from "./http_response";
-import { readerFromFile } from "./reader";
+import { parseRequest } from "./http_request";
+import { writeResponse, writeErrorResponse } from "./http_response";
+import { handleRequest } from "./handler";
 import { logger } from "./logger";
 import { parseArgs } from "util";
 import * as path from "path";
@@ -21,12 +20,12 @@ const { values } = parseArgs({
   allowPositionals: true,
 });
 
-const CWD = path.resolve(values.dir!)!;
+const CWD = path.resolve(values.dir!);
 const PORT = parseInt(values.port!);
-const MAX_HEADER_BYTES = 1024 * 32;
 const HOST = "0.0.0.0";
+const MAX_HEADER_BYTES = 1024 * 32;
 
-function extractRequest(buf: ByteArray): HTTPRequest | null {
+function extractRequest(buf: ByteArray) {
   const view = buf.view;
   const headerEnd = view.indexOf("\r\n\r\n");
 
@@ -50,38 +49,16 @@ async function serveClient(conn: Connection): Promise<void> {
     if (data.length === 0) break; // client disconnected
     buf.push(data);
 
-    let req: HTTPRequest | null;
+    let req;
     while ((req = extractRequest(buf)) !== null) {
       logger.info(`${req.method} ${req.path}`);
 
-      const requestedPath = path.resolve(path.join(CWD, req.path));
-
-      if (!requestedPath.startsWith(CWD)) {
-        throw new HTTPError(HTTPStatus.Forbidden);
-      }
-
-      const resp: HTTPResponse = {
-        status: HTTPStatus.OK,
-        headers: new Map([["Accept-Ranges", "bytes"]]),
-      };
-
-      const rangeHeader = req.headers.get("Range");
-      const rangeParsed = parseByteRange(rangeHeader);
-
-      const [start, end] =
-        rangeParsed.length === 2 ? rangeParsed : [0, Number.MAX_SAFE_INTEGER];
-
-      const fileReader = await readerFromFile(
-        requestedPath,
-        req.path,
-        start,
-        end,
-      );
+      const resp = await handleRequest(req, CWD);
 
       try {
-        await writeResponse(conn, resp, fileReader);
+        await writeResponse(conn, resp);
       } finally {
-        await fileReader.close();
+        await resp.reader?.close();
       }
     }
   }
@@ -140,7 +117,7 @@ async function main(): Promise<void> {
         logger.error(`Uncaught error in socket handler: ${err}`),
       );
     } catch {
-      // ignore listener error when we close it
+      // ignore listener error on graceful shutdown
     }
   }
 }

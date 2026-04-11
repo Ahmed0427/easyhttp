@@ -1,3 +1,8 @@
+export interface HTTPStatusType {
+  code: number;
+  message: string;
+}
+
 export const HTTPStatus = {
   // 1xx Informational
   Continue: { code: 100, message: "Continue" },
@@ -12,6 +17,7 @@ export const HTTPStatus = {
   // 3xx Redirection
   MovedPermanently: { code: 301, message: "Moved Permanently" },
   Found: { code: 302, message: "Found" },
+  NotModified: { code: 304, message: "Not Modified" },
 
   // 4xx Client Errors
   BadRequest: { code: 400, message: "Bad Request" },
@@ -31,9 +37,7 @@ export const HTTPStatus = {
   NotImplemented: { code: 501, message: "Not Implemented" },
   BadGateway: { code: 502, message: "Bad Gateway" },
   ServiceUnavailable: { code: 503, message: "Service Unavailable" },
-} as const;
-
-export type HTTPStatusType = (typeof HTTPStatus)[keyof typeof HTTPStatus];
+} as const satisfies Record<string, HTTPStatusType>;
 
 export class HTTPError extends Error {
   constructor(public readonly status: HTTPStatusType) {

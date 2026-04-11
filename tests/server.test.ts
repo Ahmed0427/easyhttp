@@ -211,6 +211,7 @@ describe("easyhttp integration", () => {
       expect(res.headers.get("Content-Type")).toContain("text/html");
 
       const text = await res.text();
+
       expect(text).toContain("file_inside.txt");
       expect(text.toLowerCase()).toContain("<!doctype html>");
     } finally {

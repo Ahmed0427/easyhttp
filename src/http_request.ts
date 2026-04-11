@@ -60,9 +60,9 @@ export function parseRequest(data: Buffer): HTTPRequest {
 }
 
 /**
- * parses a `Range: bytes=...` header value.
+ * Parses a `Range: bytes=...` header value.
  *
- * returns:
+ * Returns:
  *   - []            — header absent or malformed (treat as full file)
  *   - [start, end]  — a normal byte range (end is exclusive)
  *   - [-1, suffix]  — a suffix range (`bytes=-N`)
@@ -108,7 +108,7 @@ export function parseByteRange(
   const end = parseInt(endStr, 10);
   if (isNaN(end) || start > end) return [];
 
-  return [start, end + 1]; // inclusive end to exclusive
+  return [start, end + 1]; // inclusive end -> exclusive
 }
 
 export function formatRequest(req: HTTPRequest): string {
